@@ -35,6 +35,10 @@ applications:
         set -eux
         uv sync --frozen --no-dev
 
+    variables:
+      env:
+        SESSION_LIFETIME_DAYS: "7"
+
     # Single-worker per D10 (uvicorn defaults to one worker; in-memory state
     # in v1 needs that constraint until the iter 2.x Postgres swap).
     web:

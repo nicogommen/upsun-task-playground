@@ -83,7 +83,7 @@ routes:
 
 - One admin user. Username defaults to `admin` and is overridable via `ADMIN_USERNAME`.
 - Password is provided as an **argon2 hash** in the `ADMIN_PASSWORD_HASH` sensitive env var.
-- A small CLI helper (`python -m admin.passwordhash <password>`) prints a hash for the operator to paste into `upsun variable:create env:ADMIN_PASSWORD_HASH ...`.
+- A small CLI helper (`uv run --directory admin python -m passwordhash <password>`) prints a hash for the operator to paste into `upsun variable:create env:ADMIN_PASSWORD_HASH ...`.
 - Sessions ride on Starlette's `SessionMiddleware` (FastAPI's underlying framework), signed with `SECRET_KEY` (sensitive env var, ≥32 random bytes). Cookie attributes: `https_only=True`, `same_site="lax"`, `max_age=SESSION_LIFETIME_DAYS * 86400`.
 - A custom **HTTP middleware** redirects unauthenticated requests to `/login` for every path except `/login`, `/health`, and `/static/*`. Same outcome as Flask's `before_request`, expressed as `@app.middleware("http")` in FastAPI.
 
@@ -320,7 +320,7 @@ The `coding-agent` task block stays as in iteration 1 (`source.root: /coding-age
 | Var | Type | Required | Notes |
 |---|---|---|---|
 | `ADMIN_USERNAME` | env | no | Defaults to `admin`. |
-| `ADMIN_PASSWORD_HASH` | sensitive | yes | Argon2 hash. Generate with `python -m admin.passwordhash <password>`. |
+| `ADMIN_PASSWORD_HASH` | sensitive | yes | Argon2 hash. Generate with `uv run --directory admin python -m passwordhash <password>`. |
 | `SECRET_KEY` | sensitive | yes | ≥32 random bytes for Starlette `SessionMiddleware` cookie signing. `python -c 'import secrets; print(secrets.token_hex(32))'`. |
 | `UPSUN_TARGET_ENVIRONMENT` | env | no | Defaults to `main`. Set via `variables.env` in `.upsun/config.yaml` so admin always targets prod regardless of which env it runs in (per C3). |
 | `SESSION_LIFETIME_DAYS` | env | no | Defaults to 7. |
@@ -337,7 +337,7 @@ The auth proxy at `localhost:8200` only exists inside Upsun containers. For loca
 ```bash
 cd admin
 uv sync
-ADMIN_PASSWORD_HASH="$(python -m admin.passwordhash 'devpass')" \
+ADMIN_PASSWORD_HASH="$(uv run --directory admin python -m passwordhash 'devpass')" \
 SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" \
 UPSUN_API_TOKEN="$UPSUN_API_TOKEN"            \
 PLATFORM_PROJECT="vdaznsr6gfmd2"              \
