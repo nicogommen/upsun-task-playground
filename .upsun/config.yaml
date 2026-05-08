@@ -20,6 +20,29 @@ applications:
         "/":
           passthru: true
 
+tasks:
+  agent:
+    source:
+      root: /agent
+    type: "python:3.12"
+
+    dependencies:
+      python3:
+        pip: "*"
+
+    hooks:
+      build: |
+        set -eux
+        pip install -r requirements.txt
+
+    run:
+      command: "python run.py"
+      timeout: 900
+
+    mounts:
+      "/tmp":
+        source: "tmp"
+
 routes:
   "https://{default}/":
     type: upstream
