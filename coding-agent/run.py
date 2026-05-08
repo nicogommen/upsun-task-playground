@@ -88,52 +88,16 @@ def dump_env_for_probe() -> None:
 
 
 def resolve_prompt() -> str | None:
-    """Find the prompt — payload first, env var fallback. SPEC.md §4.2."""
-    # 1. JSON-decoded `prompt` field from any env var with TASK INPUT/PAYLOAD in its name.
-    for k, v in os.environ.items():
-        upper = k.upper()
-        looks_like_input = (
-            "TASK_INPUT" in upper
-            or "TASK_PAYLOAD" in upper
-            or "TASKINPUT" in upper
-            or "TASKPAYLOAD" in upper
-        )
-        if not looks_like_input:
-            continue
-        try:
-            payload = json.loads(v)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
-            print(f"prompt source: env var {k}", flush=True)
-            return payload["prompt"]
+    """Read the prompt from `AGENT_PROMPT`.
 
-    # 2. Files at well-known or env-pointed paths.
-    candidates = [
-        os.environ.get("PLATFORM_TASK_INPUT_FILE"),
-        "/run/task-input.json",
-        "/var/run/task-input.json",
-    ]
-    for path in candidates:
-        if not path:
-            continue
-        p = Path(path)
-        if not p.is_file():
-            continue
-        try:
-            payload = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
-            print(f"prompt source: file {path}", flush=True)
-            return payload["prompt"]
-
-    # 3. AGENT_PROMPT env var fallback.
-    if os.environ.get("AGENT_PROMPT"):
-        print("prompt source: AGENT_PROMPT (fallback)", flush=True)
-        return os.environ["AGENT_PROMPT"]
-
-    return None
+    The Upsun task-trigger payload (`variables.env.AGENT_PROMPT`) lands as a
+    plain env var (SPEC §4.2 / §7 Q1).
+    """
+    prompt = os.environ.get("AGENT_PROMPT", "").strip()
+    if not prompt:
+        return None
+    print("prompt source: AGENT_PROMPT", flush=True)
+    return prompt
 
 
 def slugify(text: str, max_len: int = BRANCH_SLUG_MAX) -> str:
@@ -141,12 +105,28 @@ def slugify(text: str, max_len: int = BRANCH_SLUG_MAX) -> str:
     return s[:max_len].rstrip("-") or "noslug"
 
 
+# Matches `scheme://user:pass@host` so we can redact credentials from logs.
+_URL_CREDS_RE = re.compile(r"://([^/@\s:]+):([^/@\s]+)@")
+
+
+def _redact(s: str) -> str:
+    """Redact passwords from URL-embedded basic-auth credentials."""
+    return _URL_CREDS_RE.sub(r"://\1:<redacted>@", s)
+
+
 def run_cmd(cmd: list[str], cwd: str | None = None) -> str:
-    """Run a command, raise on failure, return stdout."""
+    """Run a command, raise on failure, return stdout.
+
+    Logs are redacted to avoid leaking GITHUB_TOKEN if it appears in argv
+    (e.g. as part of a clone/push URL).
+    """
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(f"$ {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}\n")
-        raise RuntimeError(f"command failed (rc={result.returncode}): {' '.join(cmd)}")
+        redacted = [_redact(a) for a in cmd]
+        sys.stderr.write(
+            f"$ {' '.join(redacted)}\nstdout: {result.stdout}\nstderr: {result.stderr}\n"
+        )
+        raise RuntimeError(f"command failed (rc={result.returncode}): {' '.join(redacted)}")
     return result.stdout
 
 
@@ -160,8 +140,8 @@ def clone_repo(workdir: str, owner: str, name: str) -> None:
 
 
 def configure_git(workdir: str) -> None:
-    name = os.environ.get("GIT_USER_NAME", "upsun-task-playground-agent")
-    email = os.environ.get("GIT_USER_EMAIL", "agent@playground.local")
+    name = os.environ.get("GIT_USER_NAME", "upsun-task-playground-coding-agent")
+    email = os.environ.get("GIT_USER_EMAIL", "coding-agent@playground.local")
     run_cmd(["git", "config", "user.name", name], cwd=workdir)
     run_cmd(["git", "config", "user.email", email], cwd=workdir)
 

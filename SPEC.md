@@ -147,9 +147,9 @@ The agent is one of potentially many — its folder is `coding-agent/` and the t
 | `GITHUB_REPO` | Project env var (runtime-visible) | Required. Form: `<owner>/<name>` (e.g. `nicogommen/upsun-task-playground`). Used for both the clone URL and the PR API call. Replaces the previously hardcoded repo. |
 | `ANTHROPIC_API_KEY` | Project sensitive env var (runtime-visible) | Bring-your-own LLM key. Requires a redeploy of `main` after creation for the value to reach a running task (see §7 Q6). |
 | `GITHUB_TOKEN` | Project sensitive env var (runtime-visible) | Fine-grained PAT on the configured `GITHUB_REPO` with **`Contents: read+write`** *and* **`Pull requests: read+write`**. Used to push the branch and open the PR. |
-| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Project env vars | Commit author. Defaults: `upsun-task-playground-agent` / `agent@playground.local`. |
+| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Project env vars | Commit author. Defaults: `upsun-task-playground-coding-agent` / `coding-agent@playground.local`. |
 
-The agent's `resolve_prompt()` still keeps a small fallback ladder (look for likely-named env vars, then a `task-input.json` file, then `AGENT_PROMPT`) but the primary path on Upsun today is `variables.env.AGENT_PROMPT` → `os.environ["AGENT_PROMPT"]`.
+`resolve_prompt()` reads `os.environ["AGENT_PROMPT"]` directly. Earlier drafts of the runtime had a probe ladder for hypothetical alternative payload mechanisms (`*TASK*INPUT*` env vars, well-known JSON files); we removed it once §7 Q1 was resolved, since none of those paths ever fired in practice.
 
 ### 4.3 Lifecycle
 
