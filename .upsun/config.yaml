@@ -1,7 +1,7 @@
 applications:
-  flask:
+  frontend:
     source:
-      root: /
+      root: /frontend
     type: "python:3.14"
 
     # uv is installed by Upsun (see https://developer.upsun.com/docs/languages/python/dependencies#uv).
@@ -50,7 +50,7 @@ tasks:
 routes:
   "https://{default}/":
     type: upstream
-    upstream: "flask:http"
+    upstream: "frontend:http"
   "https://www.{default}/":
     type: redirect
     to: "https://{default}/"

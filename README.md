@@ -6,11 +6,15 @@ Full design and findings: [SPEC.md](./SPEC.md).
 
 ## Local run
 
-Uses [uv](https://docs.astral.sh/uv/) for dependency management.
+Uses [uv](https://docs.astral.sh/uv/) for dependency management. Each app is its own uv project.
 
 ```bash
-uv sync                   # install runtime + dev deps
-uv run python app.py      # http://localhost:8000
+# Frontend (the demo Flask app)
+uv sync --directory frontend
+uv run --directory frontend python app.py    # http://localhost:8000
+
+# Dev tooling (ruff, yamllint) lives at the repo root
+uv sync                                       # installs ruff + yamllint
 ```
 
 ## Endpoints

@@ -15,10 +15,13 @@ We grow the playground in small, demonstrable increments. This document specifie
 | # | Status | Title | Outcome |
 | - | ------ | ----- | ------- |
 | **1** | **Done (2026-05-08)** | **Visual Flask app + minimal coding-agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
-| 2 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
-| 3 | Pending | Agent triggers itself from the app | An app endpoint triggers the task using `PLATFORM_TASK_TOKEN` instead of a user-level token. |
+| **2** | **Pending — see [ITERATION-2.md](./ITERATION-2.md)** | **Admin UI for triggering the agent** | An authenticated admin web app lets a user submit prompts that trigger `coding-agent` (using `authorizations` + the per-container auth proxy, no user PAT) and surfaces the resulting PR + preview environment URL. |
+| 2.x | Pending | Persistent chat history (Postgres) | Move admin storage from in-memory to Postgres, persist sessions/runs across redeploys, enable the chat-history left-nav, drop the single-worker constraint. |
+| 3 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
 | 4 | Pending | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
 | 5 | Pending | Sub-agents and parallelism | One agent task launches and orchestrates others. |
+
+Detailed forward-looking notes for each pending iteration: [FUTURE-ITERATIONS.md](./FUTURE-ITERATIONS.md).
 
 ---
 
@@ -52,7 +55,9 @@ The folder name (`coding-agent/`) and task name in the config are deliberately s
 
 ---
 
-## 3. Application specification (`flask`)
+## 3. Application specification (`frontend`)
+
+The app was named `flask` in iteration 1 and renamed to `frontend` at the start of iteration 2 (see [ITERATION-2.md §5](./ITERATION-2.md) for the move). Behavior is unchanged.
 
 ### 3.1 Pages & routes
 
@@ -71,29 +76,36 @@ The homepage exists so that prompts like "change the headline" or "add a feature
 
 Tailwind via CDN is deliberate: it avoids a Node toolchain in the repo and keeps the diff for an agent-driven change tiny and human-readable (one HTML file).
 
-### 3.3 File layout (after Iteration 1)
+### 3.3 File layout (after Iteration 2 step 1 — `frontend/` restructure)
 
 ```
 upsun-task-playground/
-├── app.py                  # Flask app, renders templates/index.html
-├── pyproject.toml          # Flask + gunicorn + dev deps (ruff, yamllint)
-├── uv.lock                 # Resolved versions for the Flask app
-├── templates/
-│   └── index.html          # Homepage (hero, features, footer)
+├── frontend/
+│   ├── app.py              # Flask app, renders templates/index.html
+│   ├── pyproject.toml      # Flask + gunicorn (runtime deps for the frontend app)
+│   ├── uv.lock             # Resolved versions for the frontend app
+│   └── templates/
+│       └── index.html      # Homepage (hero, features, footer)
 ├── coding-agent/
 │   ├── run.py              # Task entry point — the agent loop
 │   ├── tools.py            # Tool definitions exposed to the LLM
 │   ├── pyproject.toml      # anthropic SDK
 │   └── uv.lock             # Resolved versions for the task
+├── pyproject.toml          # Shared dev tooling only (ruff, yamllint)
+├── uv.lock                 # Resolved versions for the dev tooling
 ├── .upsun/
-│   └── config.yaml         # flask app + coding-agent task
+│   └── config.yaml         # frontend app + coding-agent task
 ├── .github/workflows/
 │   └── ci.yml              # ruff + yamllint pipeline
 ├── .yamllint.yaml          # YAML lint config
 ├── README.md
 ├── SPEC.md                 # this file
+├── ITERATION-2.md          # in-flight iteration detail
+├── FUTURE-ITERATIONS.md    # forward-looking notes for iter 2.x, 3, 4, 5
 └── .gitignore
 ```
+
+The `admin/` folder appears in iteration 2 step 2 (see [ITERATION-2.md §4.2](./ITERATION-2.md)).
 
 ### 3.4 Homepage content (Iteration 1 baseline)
 
@@ -103,17 +115,17 @@ The agent will modify this content; the baseline is intentionally generic so cha
 - Features section: three cards titled "Tasks", "Agents", "Sandboxes" with a one-sentence description each.
 - Footer: project name + link to the GitHub repo.
 
-### 3.5 Upsun config — `flask`
+### 3.5 Upsun config — `frontend`
 
-In `.upsun/config.yaml`. Python 3.14, uv-managed venv (`dependencies.python3.uv: "*"` bootstraps uv at build, `uv sync --frozen --no-dev` installs the locked deps), `.venv/bin/gunicorn` as the start command, single `/` route to upstream.
+In `.upsun/config.yaml`. Python 3.14, uv-managed venv (`dependencies.python3.uv: "*"` bootstraps uv at build, `uv sync --frozen --no-dev` installs the locked deps), `.venv/bin/gunicorn` as the start command, single `/` route to upstream. `source.root: /frontend` since iter 2 step 1.
 
 ### 3.6 Tooling and CI
 
-The playground uses [uv](https://docs.astral.sh/uv/) end-to-end (build, runtime, local dev). Lint and format are enforced via [ruff](https://docs.astral.sh/ruff/) (Python) and [yamllint](https://yamllint.readthedocs.io/) (YAML) — both installed as dev deps in the root `pyproject.toml`.
+The playground uses [uv](https://docs.astral.sh/uv/) end-to-end (build, runtime, local dev). Lint and format are enforced via [ruff](https://docs.astral.sh/ruff/) (Python) and [yamllint](https://yamllint.readthedocs.io/) (YAML) — both installed as dev deps in the **root** `pyproject.toml`. App-specific runtime deps live in each app's own `pyproject.toml` (`frontend/`, `coding-agent/`, and `admin/` once iter 2 step 2 lands).
 
 CI runs on every push and PR via `.github/workflows/ci.yml`:
 
-1. `uv sync --frozen` (root + agent)
+1. `uv sync --frozen` (root tooling + frontend + coding-agent)
 2. `uv run ruff check .`
 3. `uv run ruff format --check .`
 4. `uv run yamllint .`
@@ -126,7 +138,7 @@ uv run ruff format .
 uv run yamllint .
 ```
 
-Lock files (`uv.lock`, `agent/uv.lock`) are committed for reproducible builds. The Upsun build hooks use `--frozen` so a missing or outdated lock fails the build instead of silently resolving fresh.
+Lock files (`uv.lock`, `frontend/uv.lock`, `coding-agent/uv.lock`) are committed for reproducible builds. The Upsun build hooks use `--frozen` so a missing or outdated lock fails the build instead of silently resolving fresh.
 
 ---
 

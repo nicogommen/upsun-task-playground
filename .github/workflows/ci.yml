@@ -18,8 +18,11 @@ jobs:
           version: latest
           enable-cache: true
 
-      - name: Sync root project (with dev deps)
+      - name: Sync root project (dev tooling — ruff, yamllint)
         run: uv sync --frozen
+
+      - name: Sync frontend project
+        run: uv sync --frozen --directory frontend
 
       - name: Sync coding-agent project
         run: uv sync --frozen --directory coding-agent

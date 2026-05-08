@@ -1,0 +1,9 @@
+[project]
+name = "upsun-task-playground-frontend"
+version = "0.1.0"
+description = "Frontend Flask app — the demo target the coding-agent edits. Renders the playground homepage."
+requires-python = ">=3.14"
+dependencies = [
+    "flask>=3.1.0",
+    "gunicorn>=23.0.0",
+]
