@@ -2,7 +2,7 @@
 
 **Purpose.** Hands-on test bed for the new Upsun **task container** and for running AI agents inside it. Used to validate the outcomes defined in the [Run Background Agents on Upsun Cloud](https://linear.app/platformsh/project/run-background-agents-on-upsun-cloud-33a30afc5ff8) project brief.
 
-**Status.** Living document. The current scope is intentionally minimal (Iteration 1 below). New iterations extend the spec.
+**Status.** Iteration 1 completed end-to-end on 2026-05-08 (PR auto-built into an active preview environment serving the agent's change). Living document — later iterations extend the spec.
 
 **Project on Upsun.** `upsun-task-playground` (`vdaznsr6gfmd2`), region `eu-3`, default branch `main`, connected to GitHub repo `nicogommen/upsun-task-playground` via the GitHub integration.
 
@@ -10,15 +10,15 @@
 
 ## 1. Iteration plan
 
-We grow the playground in small, demonstrable increments. This document only specifies **Iteration 1** in detail. Later iterations are listed for context but are not yet committed.
+We grow the playground in small, demonstrable increments. This document specifies **Iteration 1** in detail. Later iterations are listed for context but are not yet committed.
 
-| # | Title | Outcome |
-| - | ----- | ------- |
-| **1** | **Visual Flask app + minimal agent task** | Agent receives a prompt asking for a code change, makes the change, and creates a preview environment with the change applied. |
-| 2 | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
-| 3 | Agent triggers itself from the app | An app endpoint triggers the task using `PLATFORM_TASK_TOKEN` instead of a user-level token. |
-| 4 | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
-| 5 | Sub-agents and parallelism | One agent task launches and orchestrates others. |
+| # | Status | Title | Outcome |
+| - | ------ | ----- | ------- |
+| **1** | **Done (2026-05-08)** | **Visual Flask app + minimal agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
+| 2 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
+| 3 | Pending | Agent triggers itself from the app | An app endpoint triggers the task using `PLATFORM_TASK_TOKEN` instead of a user-level token. |
+| 4 | Pending | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
+| 5 | Pending | Sub-agents and parallelism | One agent task launches and orchestrates others. |
 
 ---
 
@@ -185,7 +185,6 @@ tasks:
 - **uv install path differs from the flask app — and not by choice.** The task validator rejects both `dependencies` (the app's path) and `stack` (the composable image's path) with `Unknown key`, even with the task capability enabled. Astral's official installer is the only pip-free option that works today. The flask app stays on `dependencies.python3.uv: "*"`. See §7 Q5 — both gaps are real findings from this experiment, to be raised with the schema owners.
 - `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - Ruff's `target-version` is intentionally pinned to `py313` even though both apps deploy on Python 3.14. The newer "unparenthesized except clauses" syntax is a 3.14-only feature; pinning ruff lower keeps the source portable and prevents `ruff format` from stripping parens that would then break a 3.13 fallback. Cheap insurance.
-- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.
 - No `relationships:` declared. Iteration 1 doesn't talk to any service.
@@ -295,12 +294,12 @@ Iteration 2+ may add structured tracing (e.g. write a JSON log of each LLM turn)
 These shaped the spec above; documented so we can revisit them.
 
 1. **Tailwind via CDN, not a build step.** Avoids Node, keeps prompts → diffs → previews fast. We can swap to a real build later if we test Node-based agent prompts.
-2. **Try the trigger payload first; runtime env var is the fallback.** Per GIT-857, trigger input parameters are nominally "Later", but the endpoint may already pass the body through. Iteration 1 probes for it on the first run and only commits to the env-var path if the payload doesn't surface in the container.
+2. **Trigger payload via `variables.env.<NAME>`.** Per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), entries under `variables.env` land as plain env vars in the task process — confirmed empirically (§7 Q1). The agent's `resolve_prompt()` keeps a small fallback ladder for portability, but in practice on Upsun the prompt arrives as `os.environ["AGENT_PROMPT"]`.
 3. **Clone fresh over HTTPS, not push from the slug.** The task slug is not a git checkout; cloning fresh is the simplest way to get a full git tree to edit and push from.
 4. **GitHub PAT now, scoped credentials later.** A PAT in `GITHUB_TOKEN` is the simplest. `PLATFORM_TASK_TOKEN` (per the [App task trigger auth RFC](../../rfc-app-task-trigger-authentication.md)) is the right answer for Iteration 3, when the trigger comes from the app itself. Document but don't build it now.
 5. **Four tools, not many.** `read_file`, `list_dir`, `write_file`, `run_bash`. Easy to reason about, easy to lock down later. `run_bash` is the escape hatch; we can remove it once we have richer tools.
 6. **Don't wait for the deploy.** Push and exit is the contract for Iteration 1. Adding "wait + curl + report" is a clean Iteration 2 because it's a strict superset.
-7. **Branch name encodes the prompt.** `agent/<timestamp>-<slug>` makes preview environments easy to find in the Upsun console.
+7. **Branch name encodes the prompt.** `agent-<6 hex>-<slug>` (≤39 chars, no slashes, alphanumeric+dash). Random hex keeps each run unique even if the same prompt fires twice; the slug keeps PR titles and Upsun env names human-readable.
 8. **Anthropic SDK, not Claude Code CLI.** Per your call — better for learning. The trade-off is we write the loop ourselves; the upside is we own every step and can instrument it.
 9. **Sonnet 4.6, not Opus.** Cheaper per token and fast enough for small visual edits. We'll move to Opus only if we see Sonnet fail on tasks we expect to succeed.
 
