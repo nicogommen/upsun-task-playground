@@ -25,11 +25,16 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "python:3.14"
 
-    dependencies:
-      python3:
-        uv: "*"
+    # Composable image (Nix-based) lets us declare python@3.14 and uv as
+    # first-class stack entries. uv is on $PATH automatically.
+    # See https://developer.upsun.com/docs/configure-apps/app-reference/composable-image
+    type: "composable:24.1"
+    stack:
+      runtimes:
+        - "python@3.14"
+      packages:
+        - uv
 
     hooks:
       build: |

@@ -177,10 +177,12 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "python:3.14"
-    dependencies:
-      python3:
-        uv: "*"
+    type: "composable:24.1"
+    stack:
+      runtimes:
+        - "python@3.14"
+      packages:
+        - uv
     hooks:
       build: |
         set -eux
@@ -194,8 +196,8 @@ tasks:
 ```
 
 - `source.root: /agent` keeps the task's code separate from the Flask app.
-- `dependencies.python3.uv: "*"` bootstraps uv at build (no pip).
-- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps; the agent project's runtime deps are all we need.
+- **Composable image** ([reference](https://developer.upsun.com/docs/configure-apps/app-reference/composable-image)) instead of the single-runtime `python:3.14` image. The flask app stays on the single-runtime image because it doesn't need extra packages. The task uses composable so we can pull `uv` from Nixpkgs alongside `python@3.14` — both end up on `$PATH` automatically. This sidesteps the `dependencies` schema gap on tasks (see §7 Q5) without falling back to a curl installer.
+- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.
 - No `relationships:` declared. Iteration 1 doesn't talk to any service.
@@ -348,6 +350,7 @@ Real things we don't yet know — to be answered by Iteration 1 itself or by che
 - **Q2.** What is the user-visible behavior when a second trigger fires while one is in flight? The docs mention a default cap of 3 parallel runs, but it's unclear whether requests above the cap queue, reject with an error, or block.
 - **Q3.** Does the GitHub integration treat a push from inside a task container identically to a push from a developer machine? Specifically: does it auto-create a preview environment, and does Upsun mirror the agent-pushed branch back into the project?
 - **Q4.** What permissions does the user-token-authenticated trigger require? Is project-admin enough, or is there a finer-grained role we should use for production?
+- **Q5.** Why is `dependencies` rejected on tasks (`Unknown key "dependencies"`) even after the task capability is enabled? The flask app accepts the same key. We've worked around it by putting the task on a composable image (Nix-based), but the schema gap is worth fixing — without it, single-runtime tasks can't bootstrap uv (or any non-default Python tool) cleanly.
 
 ---
 
