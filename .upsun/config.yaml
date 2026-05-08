@@ -2,20 +2,21 @@ applications:
   flask:
     source:
       root: /
-    type: "python:3.12"
+    type: "python:3.14"
 
+    # uv is installed by Upsun (see https://developer.upsun.com/docs/languages/python/dependencies#uv).
     dependencies:
       python3:
-        pip: "*"
+        uv: "*"
 
     hooks:
       build: |
         set -eux
-        pip install -r requirements.txt
+        uv sync --frozen --no-dev
 
     web:
       commands:
-        start: "gunicorn -w 2 -b localhost:$PORT app:app"
+        start: ".venv/bin/gunicorn -w 2 -b localhost:$PORT app:app"
       locations:
         "/":
           passthru: true
@@ -24,19 +25,19 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "python:3.12"
+    type: "python:3.14"
 
     dependencies:
       python3:
-        pip: "*"
+        uv: "*"
 
     hooks:
       build: |
         set -eux
-        pip install -r requirements.txt
+        uv sync --frozen
 
     run:
-      command: "python run.py"
+      command: ".venv/bin/python run.py"
       timeout: 900
 
     mounts:

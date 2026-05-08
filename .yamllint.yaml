@@ -1,0 +1,18 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  truthy:
+    check-keys: false
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+ignore: |
+  .venv/
+  agent/.venv/
+  node_modules/

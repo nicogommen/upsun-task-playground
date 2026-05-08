@@ -6,6 +6,7 @@ Four tools, deliberately minimal:
 - write_file
 - run_bash
 """
+
 import subprocess
 from pathlib import Path
 
@@ -32,7 +33,7 @@ TOOLS = [
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Directory path relative to the repo root. Use '.' for the root.",
+                    "description": "Directory path relative to the repo root. Use '.' for root.",
                 },
             },
             "required": ["path"],
@@ -40,7 +41,10 @@ TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Overwrite a file in the repo with the given content. Creates parent directories if missing.",
+        "description": (
+            "Overwrite a file in the repo with the given content. "
+            "Creates parent directories if missing."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -58,7 +62,11 @@ TOOLS = [
     },
     {
         "name": "run_bash",
-        "description": "Run a shell command in the repo root. Use for tasks not covered by the other tools (e.g. running a syntax check, grepping). Output is truncated to 4000 chars.",
+        "description": (
+            "Run a shell command in the repo root. Use for tasks not covered by "
+            "the other tools (e.g. running a syntax check, grepping). Output is "
+            "truncated to 4000 chars."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

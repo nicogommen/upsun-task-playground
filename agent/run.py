@@ -6,6 +6,7 @@ via the existing GitHub integration.
 
 Spec: SPEC.md §4.
 """
+
 import json
 import os
 import re
@@ -16,7 +17,6 @@ import time
 from pathlib import Path
 
 import anthropic
-
 from tools import TOOLS, dispatch_tool
 
 REPO_HOST_PATH = "github.com/nicogommen/upsun-task-playground.git"
@@ -69,7 +69,7 @@ def resolve_prompt() -> str | None:
             continue
         try:
             payload = json.loads(v)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
         if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
             print(f"prompt source: env var {k}", flush=True)
@@ -89,7 +89,7 @@ def resolve_prompt() -> str | None:
             continue
         try:
             payload = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             continue
         if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
             print(f"prompt source: file {path}", flush=True)
@@ -112,9 +112,7 @@ def run_cmd(cmd: list[str], cwd: str | None = None) -> str:
     """Run a command, raise on failure, return stdout."""
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(
-            f"$ {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}\n"
-        )
+        sys.stderr.write(f"$ {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}\n")
         raise RuntimeError(f"command failed (rc={result.returncode}): {' '.join(cmd)}")
     return result.stdout
 
@@ -196,9 +194,7 @@ def commit_and_push(workdir: str, branch: str, prompt: str) -> int:
     else:
         print("no uncommitted changes", flush=True)
 
-    ahead = run_cmd(
-        ["git", "rev-list", "--count", "origin/main..HEAD"], cwd=workdir
-    ).strip()
+    ahead = run_cmd(["git", "rev-list", "--count", "origin/main..HEAD"], cwd=workdir).strip()
     if ahead == "0":
         print("NO_CHANGES — branch has no new commits over origin/main", flush=True)
         return 0

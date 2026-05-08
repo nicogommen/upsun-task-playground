@@ -4,17 +4,28 @@ Test project for Upsun task container experiments. First app: a minimal Flask se
 
 ## Local run
 
+Uses [uv](https://docs.astral.sh/uv/) for dependency management.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python app.py  # http://localhost:8000
+uv sync                   # install runtime + dev deps
+uv run python app.py      # http://localhost:8000
 ```
 
 ## Endpoints
 
-- `GET /` — JSON greeting
-- `GET /health` — health check
+- `GET /` — homepage (Jinja template, Tailwind via CDN)
+- `GET /health` — JSON health check
+
+## Lint and format
+
+```bash
+uv run ruff check .
+uv run ruff format .
+uv run yamllint .
+```
+
+CI runs the same set on every push and PR. See `.github/workflows/ci.yml`.
 
 ## Deploy
 
-Commits to `main` are pushed to GitHub and deployed by Upsun via the connected integration. App config lives in `.upsun/config.yaml` (Python 3.12, gunicorn).
+Commits to `main` push to GitHub; Upsun mirrors via the connected integration and runs the build defined in `.upsun/config.yaml` (Python 3.14, uv-managed venv, gunicorn).

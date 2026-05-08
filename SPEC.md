@@ -62,7 +62,7 @@ The homepage exists so that prompts like "change the headline" or "add a feature
 
 ### 3.2 Tech stack
 
-- Python 3.12, Flask 3.1.x, Jinja2 templates.
+- Python 3.14, Flask 3.1.x, Jinja2 templates.
 - Tailwind via CDN (`<script src="https://cdn.tailwindcss.com"></script>`) — no JS build step.
 - Gunicorn 26.x as the production WSGI server (already in place).
 
@@ -73,16 +73,20 @@ Tailwind via CDN is deliberate: it avoids a Node toolchain in the repo and keeps
 ```
 upsun-task-playground/
 ├── app.py                  # Flask app, renders templates/index.html
-├── requirements.txt        # Flask, gunicorn
+├── pyproject.toml          # Flask + gunicorn + dev deps (ruff, yamllint)
+├── uv.lock                 # Resolved versions for the Flask app
 ├── templates/
 │   └── index.html          # Homepage (hero, features, footer)
-├── static/                 # (empty for now; reserved for screenshots/assets)
 ├── agent/
 │   ├── run.py              # Task entry point — the agent loop
 │   ├── tools.py            # Tool definitions exposed to the LLM
-│   └── requirements.txt    # anthropic SDK
+│   ├── pyproject.toml      # anthropic SDK
+│   └── uv.lock             # Resolved versions for the task
 ├── .upsun/
 │   └── config.yaml         # flask app + agent task
+├── .github/workflows/
+│   └── ci.yml              # ruff + yamllint pipeline
+├── .yamllint.yaml          # YAML lint config
 ├── README.md
 ├── SPEC.md                 # this file
 └── .gitignore
@@ -96,9 +100,30 @@ The agent will modify this content; the baseline is intentionally generic so cha
 - Features section: three cards titled "Tasks", "Agents", "Sandboxes" with a one-sentence description each.
 - Footer: project name + link to the GitHub repo.
 
-### 3.5 Upsun config — `flask` (no change from current)
+### 3.5 Upsun config — `flask`
 
-Already in place; see `.upsun/config.yaml`. Python 3.12, gunicorn, single `/` route to upstream.
+In `.upsun/config.yaml`. Python 3.14, uv-managed venv (`dependencies.python3.uv: "*"` bootstraps uv at build, `uv sync --frozen --no-dev` installs the locked deps), `.venv/bin/gunicorn` as the start command, single `/` route to upstream.
+
+### 3.6 Tooling and CI
+
+The playground uses [uv](https://docs.astral.sh/uv/) end-to-end (build, runtime, local dev). Lint and format are enforced via [ruff](https://docs.astral.sh/ruff/) (Python) and [yamllint](https://yamllint.readthedocs.io/) (YAML) — both installed as dev deps in the root `pyproject.toml`.
+
+CI runs on every push and PR via `.github/workflows/ci.yml`:
+
+1. `uv sync --frozen` (root + agent)
+2. `uv run ruff check .`
+3. `uv run ruff format --check .`
+4. `uv run yamllint .`
+
+Local equivalents:
+
+```bash
+uv run ruff check .
+uv run ruff format .
+uv run yamllint .
+```
+
+Lock files (`uv.lock`, `agent/uv.lock`) are committed for reproducible builds. The Upsun build hooks use `--frozen` so a missing or outdated lock fails the build instead of silently resolving fresh.
 
 ---
 
@@ -152,19 +177,25 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "python:3.12"
+    type: "python:3.14"
+    dependencies:
+      python3:
+        uv: "*"
     hooks:
       build: |
         set -eux
-        pip install -r requirements.txt
+        uv sync --frozen
     run:
-      command: "python run.py"
+      command: ".venv/bin/python run.py"
       timeout: 900
     mounts:
-      "/tmp": { source: "tmp" }
+      "/tmp":
+        source: "tmp"
 ```
 
 - `source.root: /agent` keeps the task's code separate from the Flask app.
+- `dependencies.python3.uv: "*"` bootstraps uv at build (no pip).
+- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps; the agent project's runtime deps are all we need.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.
 - No `relationships:` declared. Iteration 1 doesn't talk to any service.
