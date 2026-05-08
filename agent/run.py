@@ -69,7 +69,7 @@ def resolve_prompt() -> str | None:
             continue
         try:
             payload = json.loads(v)
-        except json.JSONDecodeError, TypeError:
+        except (json.JSONDecodeError, TypeError):
             continue
         if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
             print(f"prompt source: env var {k}", flush=True)
@@ -89,7 +89,7 @@ def resolve_prompt() -> str | None:
             continue
         try:
             payload = json.loads(p.read_text())
-        except json.JSONDecodeError, OSError:
+        except (json.JSONDecodeError, OSError):
             continue
         if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
             print(f"prompt source: file {path}", flush=True)

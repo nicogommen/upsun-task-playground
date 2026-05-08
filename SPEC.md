@@ -177,10 +177,10 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "composable:24.1"
+    type: "composable:25.11"
     stack:
       runtimes:
-        - "python@3.14"
+        - "python@3.13"
       packages:
         - uv
     hooks:
@@ -196,7 +196,8 @@ tasks:
 ```
 
 - `source.root: /agent` keeps the task's code separate from the Flask app.
-- **Composable image** ([reference](https://developer.upsun.com/docs/configure-apps/app-reference/composable-image)) instead of the single-runtime `python:3.14` image. The flask app stays on the single-runtime image because it doesn't need extra packages. The task uses composable so we can pull `uv` from Nixpkgs alongside `python@3.14` — both end up on `$PATH` automatically. This sidesteps the `dependencies` schema gap on tasks (see §7 Q5) without falling back to a curl installer.
+- **Composable image** ([reference](https://developer.upsun.com/docs/configure-apps/app-reference/composable-image)) instead of the single-runtime `python:3.14` image. The flask app stays on single-runtime because it doesn't need extra packages. The task uses composable so we can pull `uv` from Nixpkgs alongside `python@3.13` — both end up on `$PATH` automatically. This sidesteps the `dependencies` schema gap on tasks (see §7 Q5) without a curl installer.
+- **Python version mismatch is intentional.** Composable channel 25.11 (the current latest, per `meta.upsun.com/composable`) tops out at Python 3.13 in its package catalog. The flask app uses single-runtime `python:3.14`. The agent's `pyproject.toml` declares `requires-python = ">=3.13"` and ruff's `target-version` is `py313` to keep both consistent.
 - `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.

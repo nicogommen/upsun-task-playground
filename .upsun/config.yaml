@@ -26,13 +26,16 @@ tasks:
     source:
       root: /agent
 
-    # Composable image (Nix-based) lets us declare python@3.14 and uv as
-    # first-class stack entries. uv is on $PATH automatically.
+    # Composable image (Nix-based) lets us declare python and uv as first-class
+    # stack entries. uv is on $PATH automatically.
     # See https://developer.upsun.com/docs/configure-apps/app-reference/composable-image
-    type: "composable:24.1"
+    # 25.11 is the current latest channel (per meta.upsun.com/composable).
+    # python@3.13 is the latest Python in that channel; the flask app stays on
+    # python:3.14 (single-runtime image) where 3.14 is supported.
+    type: "composable:25.11"
     stack:
       runtimes:
-        - "python@3.14"
+        - "python@3.13"
       packages:
         - uv
 
