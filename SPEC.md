@@ -177,15 +177,12 @@ tasks:
   agent:
     source:
       root: /agent
-    type: "composable:25.11"
-    stack:
-      runtimes:
-        - "python@3.13"
-      packages:
-        - uv
+    type: "python:3.14"
     hooks:
       build: |
         set -eux
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
         uv sync --frozen
     run:
       command: ".venv/bin/python run.py"
@@ -196,8 +193,9 @@ tasks:
 ```
 
 - `source.root: /agent` keeps the task's code separate from the Flask app.
-- **Composable image** ([reference](https://developer.upsun.com/docs/configure-apps/app-reference/composable-image)) instead of the single-runtime `python:3.14` image. The flask app stays on single-runtime because it doesn't need extra packages. The task uses composable so we can pull `uv` from Nixpkgs alongside `python@3.13` — both end up on `$PATH` automatically. This sidesteps the `dependencies` schema gap on tasks (see §7 Q5) without a curl installer.
-- **Python version mismatch is intentional.** Composable channel 25.11 (the current latest, per `meta.upsun.com/composable`) tops out at Python 3.13 in its package catalog. The flask app uses single-runtime `python:3.14`. The agent's `pyproject.toml` declares `requires-python = ">=3.13"` and ruff's `target-version` is `py313` to keep both consistent.
+- **uv install path differs from the flask app — and not by choice.** The task validator rejects both `dependencies` (the app's path) and `stack` (the composable image's path) with `Unknown key`, even with the task capability enabled. Astral's official installer is the only pip-free option that works today. The flask app stays on `dependencies.python3.uv: "*"`. See §7 Q5 — both gaps are real findings from this experiment, to be raised with the schema owners.
+- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
+- Ruff's `target-version` is intentionally pinned to `py313` even though both apps deploy on Python 3.14. The newer "unparenthesized except clauses" syntax is a 3.14-only feature; pinning ruff lower keeps the source portable and prevents `ruff format` from stripping parens that would then break a 3.13 fallback. Cheap insurance.
 - `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.
@@ -351,7 +349,7 @@ Real things we don't yet know — to be answered by Iteration 1 itself or by che
 - **Q2.** What is the user-visible behavior when a second trigger fires while one is in flight? The docs mention a default cap of 3 parallel runs, but it's unclear whether requests above the cap queue, reject with an error, or block.
 - **Q3.** Does the GitHub integration treat a push from inside a task container identically to a push from a developer machine? Specifically: does it auto-create a preview environment, and does Upsun mirror the agent-pushed branch back into the project?
 - **Q4.** What permissions does the user-token-authenticated trigger require? Is project-admin enough, or is there a finer-grained role we should use for production?
-- **Q5.** Why is `dependencies` rejected on tasks (`Unknown key "dependencies"`) even after the task capability is enabled? The flask app accepts the same key. We've worked around it by putting the task on a composable image (Nix-based), but the schema gap is worth fixing — without it, single-runtime tasks can't bootstrap uv (or any non-default Python tool) cleanly.
+- **Q5.** Why are `dependencies` *and* `stack` both rejected on tasks (`Unknown key`) even after the task capability is enabled? The flask app accepts both keys (single-runtime takes `dependencies`, composable image takes `stack`). On tasks, neither works, which means the only pip-free way to get `uv` (or any non-default Python tool) onto a task today is Astral's curl installer. Confirmed empirically with two failed deploys (composable 24.1 and composable 25.11). Worth raising with the team that owns the task config schema — this is likely a parity oversight in the new task type rather than an intentional restriction.
 
 ---
 
