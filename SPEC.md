@@ -76,7 +76,7 @@ The homepage exists so that prompts like "change the headline" or "add a feature
 
 Tailwind via CDN is deliberate: it avoids a Node toolchain in the repo and keeps the diff for an agent-driven change tiny and human-readable (one HTML file).
 
-### 3.3 File layout (after Iteration 2 step 1 — `frontend/` restructure)
+### 3.3 File layout (after Iteration 2 step 2 — `admin/` scaffold)
 
 ```
 upsun-task-playground/
@@ -86,6 +86,10 @@ upsun-task-playground/
 │   ├── uv.lock             # Resolved versions for the frontend app
 │   └── templates/
 │       └── index.html      # Homepage (hero, features, footer)
+├── admin/
+│   ├── app.py              # FastAPI app — currently exposes only /health
+│   ├── pyproject.toml      # FastAPI + uvicorn[standard]
+│   └── uv.lock             # Resolved versions for the admin app
 ├── coding-agent/
 │   ├── run.py              # Task entry point — the agent loop
 │   ├── tools.py            # Tool definitions exposed to the LLM
@@ -94,7 +98,7 @@ upsun-task-playground/
 ├── pyproject.toml          # Shared dev tooling only (ruff, yamllint)
 ├── uv.lock                 # Resolved versions for the dev tooling
 ├── .upsun/
-│   └── config.yaml         # frontend app + coding-agent task
+│   └── config.yaml         # frontend + admin apps + coding-agent task
 ├── .github/workflows/
 │   └── ci.yml              # ruff + yamllint pipeline
 ├── .yamllint.yaml          # YAML lint config
@@ -105,7 +109,7 @@ upsun-task-playground/
 └── .gitignore
 ```
 
-The `admin/` folder appears in iteration 2 step 2 (see [ITERATION-2.md §4.2](./ITERATION-2.md)).
+`admin/` is a scaffold so far — only the FastAPI `/health` endpoint exists. Auth, templates, the chat UI, and the Upsun client land in iter 2 steps 3–8 (see [ITERATION-2.md §4.2](./ITERATION-2.md)).
 
 ### 3.4 Homepage content (Iteration 1 baseline)
 

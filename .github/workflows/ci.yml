@@ -24,6 +24,9 @@ jobs:
       - name: Sync frontend project
         run: uv sync --frozen --directory frontend
 
+      - name: Sync admin project
+        run: uv sync --frozen --directory admin
+
       - name: Sync coding-agent project
         run: uv sync --frozen --directory coding-agent
 

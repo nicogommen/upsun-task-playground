@@ -1,0 +1,9 @@
+[project]
+name = "upsun-task-playground-admin"
+version = "0.1.0"
+description = "Admin UI for triggering the coding-agent task. FastAPI + uvicorn (ASGI). See ITERATION-2.md."
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]

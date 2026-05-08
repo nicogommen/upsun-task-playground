@@ -21,6 +21,29 @@ applications:
         "/":
           passthru: true
 
+  admin:
+    source:
+      root: /admin
+    type: "python:3.14"
+
+    dependencies:
+      python3:
+        uv: "*"
+
+    hooks:
+      build: |
+        set -eux
+        uv sync --frozen --no-dev
+
+    # Single-worker per D10 (uvicorn defaults to one worker; in-memory state
+    # in v1 needs that constraint until the iter 2.x Postgres swap).
+    web:
+      commands:
+        start: ".venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT"
+      locations:
+        "/":
+          passthru: true
+
 tasks:
   coding-agent:
     source:
@@ -51,6 +74,9 @@ routes:
   "https://{default}/":
     type: upstream
     upstream: "frontend:http"
+  "https://admin.{default}/":
+    type: upstream
+    upstream: "admin:http"
   "https://www.{default}/":
     type: redirect
     to: "https://{default}/"
