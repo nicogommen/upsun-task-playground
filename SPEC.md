@@ -27,8 +27,8 @@ We grow the playground in small, demonstrable increments. This document only spe
 ### 2.1 Goals
 
 - A small Flask app with an actual UI (homepage with demo content) so visual changes are obvious.
-- An Upsun `task` container that, given a natural-language prompt, edits the codebase to satisfy that prompt and pushes the result to a new branch.
-- The push triggers a preview environment via the existing GitHub integration. **The agent's job ends at `git push`.**
+- An Upsun `task` container that, given a natural-language prompt, edits the codebase to satisfy that prompt, pushes the result to a new branch, and opens a pull request on GitHub.
+- The PR triggers an **active** preview environment via the GitHub integration's `build_pull_requests` setting. **The agent's job ends after the PR is opened.**
 
 ### 2.2 Out of scope for Iteration 1
 
@@ -41,11 +41,12 @@ We grow the playground in small, demonstrable increments. This document only spe
 
 ### 2.3 Success criteria
 
-- Running `upsunstg e:curl tasks/agent/run -X POST -d '{"prompt":"..."}'` creates an activity that completes without error. (See §4.2 for prompt delivery — payload first, env var as fallback.)
-- A new branch named `agent/<timestamp>-<slug>` appears on GitHub.
-- Upsun creates a preview environment for that branch automatically (via the existing GitHub integration).
+- Running `upsun e:curl tasks/agent/run -X POST -d '{"variables":{"env":{"AGENT_PROMPT":"..."}}}'` creates an activity that completes without error.
+- A new branch named `agent-<6 hex>-<slug>` (≤39 chars, no slashes) appears on GitHub.
+- A pull request against `main` is opened automatically by the agent.
+- The GitHub integration builds the PR as an **active** preview environment (`build_pull_requests`).
 - The preview environment URL serves the modified version of the homepage.
-- The task activity log contains a readable trace of the agent's reasoning and tool calls.
+- The task activity log contains a readable trace of the agent's reasoning, tool calls, and the PR URL.
 
 ---
 
@@ -131,42 +132,30 @@ Lock files (`uv.lock`, `agent/uv.lock`) are committed for reproducible builds. T
 
 ### 4.1 Concept
 
-A single Upsun `task` container that runs the **agent runtime**. The agent runtime is a Python script using the Anthropic SDK with tool use. The task is triggered manually (per-run) via the API; the prompt is passed in via an Upsun environment variable.
+A single Upsun `task` container that runs the **agent runtime**. The agent runtime is a Python script using the Anthropic SDK with tool use. The task is triggered via the Upsun task-trigger API ([GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint)); the prompt is passed in the trigger payload under `variables.env.AGENT_PROMPT`. After making the change the agent opens a pull request, which the GitHub integration builds as an active preview environment.
 
 ### 4.2 Inputs
 
 | Input | Source | Notes |
 | ----- | ------ | ----- |
-| **Prompt** | **Trigger payload (preferred), env var (fallback)** | The natural-language instruction. Primary path: passed in the JSON body of the trigger call (`-d '{"prompt":"..."}'`). Fallback: Upsun runtime env var `AGENT_PROMPT`, set via `upsun variable:create --level environment --name env:AGENT_PROMPT --value "..."`. |
-| `ANTHROPIC_API_KEY` | Upsun sensitive env var | Bring-your-own LLM key. Set once. |
-| `GITHUB_TOKEN` | Upsun sensitive env var | GitHub PAT with `repo` scope on `nicogommen/upsun-task-playground`. Used to push the agent's branch. |
-| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Upsun env vars | Used to set commit author. Default: `upsun-task-playground-agent` / `agent@playground.local`. |
+| **`AGENT_PROMPT`** | **Trigger payload** (`variables.env.AGENT_PROMPT`) | The natural-language instruction. Per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), variables under `variables.env.<NAME>` land as plain env vars in the task process. Confirmed empirically. |
+| `ANTHROPIC_API_KEY` | Upsun sensitive env var (project, runtime-visible) | Bring-your-own LLM key. Requires a redeploy of `main` after creation for the value to reach a running task (see §7 Q6). |
+| `GITHUB_TOKEN` | Upsun sensitive env var (project, runtime-visible) | Fine-grained PAT on `nicogommen/upsun-task-playground` with **`Contents: read+write`** *and* **`Pull requests: read+write`**. Used to push the branch and open the PR. |
+| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Upsun env vars | Commit author. Defaults: `upsun-task-playground-agent` / `agent@playground.local`. |
 
-#### Prompt delivery: probe + fallback
-
-Trigger input parameters are listed as a "Later" item in [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), but the endpoint may already pass the body through. We will find out empirically rather than assuming.
-
-On startup, the agent runtime:
-
-1. Prints all env vars matching `PLATFORM_*` and `UPSUN_*` to stdout (logs are private; values are not redacted at this stage so we can see exactly what's exposed).
-2. Looks for the prompt in this priority order:
-   1. JSON-decoded `prompt` field from any env var matching `*TASK*INPUT*`, `*TASK*PAYLOAD*`, or `PLATFORM_TASK_*` (in case Upsun injects the trigger body under one of those names).
-   2. Body content of any file at `/run/task-input.json`, `/var/run/task-input.json`, or `$PLATFORM_TASK_INPUT_FILE` (alternate convention some platforms use).
-   3. The `AGENT_PROMPT` env var.
-3. If none is present, exits with a clear `NO_PROMPT_FOUND` message and the env dump.
-
-The first triggered run is effectively a probe: we trigger with `-d '{"prompt":"<small visible change>"}'` **and** also set `AGENT_PROMPT` to a different value. Whichever the agent picks up tells us where the payload landed (or that we need the env-var fallback).
-
-Once the mechanism is known, we drop the unused fallback path from the runtime and update this spec.
+The agent's `resolve_prompt()` still keeps a small fallback ladder (look for likely-named env vars, then a `task-input.json` file, then `AGENT_PROMPT`) but the primary path on Upsun today is `variables.env.AGENT_PROMPT` → `os.environ["AGENT_PROMPT"]`.
 
 ### 4.3 Lifecycle
 
 1. Upsun creates a fresh container with the task's slug.
-2. Container starts, working directory is the task source root (`/app/agent`); the repository contents are available (the slug, no `.git`).
+2. Container starts, working directory is the task source root (`/app`); the repository contents are available (the slug, no `.git`).
 3. The agent runtime clones the repo fresh (`git clone` over HTTPS using `GITHUB_TOKEN`) into `/tmp/work` so it has full git history and a writable tree.
-4. Agent runs the LLM loop until either: the LLM emits a `done` tool call, the loop hits the iteration limit (default 25), or the timeout expires.
-5. Agent commits and pushes the branch.
-6. Container exits.
+4. Agent creates a branch `agent-<6 hex>-<slug>` (≤39 chars, no `/`).
+5. Agent runs the LLM loop until either: the LLM emits a `stop_reason: end_turn`, the loop hits the iteration limit (default 25), or the timeout expires.
+6. Agent commits and pushes the branch.
+7. Agent opens a pull request against `main` via the GitHub REST API (stdlib `urllib`, no extra deps). The PR title encodes the prompt; the body links the prompt and the source.
+8. The GitHub integration builds the PR as an active preview environment (`build_pull_requests`).
+9. Container exits.
 
 ### 4.4 Container config
 
@@ -204,13 +193,13 @@ tasks:
 
 ### 4.5 Agent runtime
 
-Located at `agent/run.py`. Pseudocode:
+Located at `agent/run.py`. Pseudocode (the contract; see the file for the full implementation):
 
 ```python
-import os, subprocess, time, slugify, anthropic
+import os, secrets, subprocess, anthropic, urllib.request
 from tools import TOOLS, dispatch_tool
 
-prompt = resolve_prompt()  # see §4.2 — payload first, env var fallback
+prompt = resolve_prompt()  # variables.env.AGENT_PROMPT (see §4.2)
 client = anthropic.Anthropic()
 
 # 1. Clone fresh repo with credentials
@@ -218,40 +207,20 @@ workdir = "/tmp/work"
 clone_url = f"https://x-access-token:{os.environ['GITHUB_TOKEN']}@github.com/nicogommen/upsun-task-playground.git"
 subprocess.run(["git", "clone", clone_url, workdir], check=True)
 
-branch = f"agent/{int(time.time())}-{slugify(prompt)[:40]}"
+# 2. Branch name: agent-<6hex>-<slug<=26>, total <=39 chars, no slashes
+branch = f"agent-{secrets.token_hex(3)}-{slugify(prompt, max_len=26)}"
 subprocess.run(["git", "-C", workdir, "checkout", "-b", branch], check=True)
 
-# 2. Configure git author
-subprocess.run(["git", "-C", workdir, "config", "user.name",  os.environ["GIT_USER_NAME"]], check=True)
-subprocess.run(["git", "-C", workdir, "config", "user.email", os.environ["GIT_USER_EMAIL"]], check=True)
+# 3. Configure git author, run the LLM loop, commit, push
+# (claude-sonnet-4-6, 25 turn limit, stop on end_turn) ...
 
-# 3. Run the LLM loop
-messages = [{"role": "user", "content": prompt}]
-for _ in range(25):
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        tools=TOOLS,
-        messages=messages,
-    )
-    messages.append({"role": "assistant", "content": resp.content})
-    if resp.stop_reason == "end_turn":
-        break
-    tool_results = [dispatch_tool(b, workdir) for b in resp.content if b.type == "tool_use"]
-    messages.append({"role": "user", "content": tool_results})
-
-# 4. Commit and push if there are changes
-status = subprocess.run(["git", "-C", workdir, "status", "--porcelain"], capture_output=True, text=True).stdout
-if status.strip():
-    subprocess.run(["git", "-C", workdir, "add", "-A"], check=True)
-    subprocess.run(["git", "-C", workdir, "commit", "-m", f"Agent: {prompt[:72]}"], check=True)
-    subprocess.run(["git", "-C", workdir, "push", "origin", branch], check=True)
-    print(f"PUSHED {branch}")
-else:
-    print("NO_CHANGES")
+# 4. Open the PR via GitHub REST API (stdlib urllib)
+urllib.request.Request(
+    "https://api.github.com/repos/nicogommen/upsun-task-playground/pulls",
+    data=json.dumps({"title": ..., "head": branch, "base": "main", "body": ...}).encode(),
+    headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", ...},
+)
 ```
-
-The full implementation will be in `agent/run.py`; the snippet above defines the contract.
 
 ### 4.6 Tool surface
 
@@ -269,40 +238,36 @@ Edits-only via `write_file` (no diff/patch tool) keeps the loop simple. `run_bas
 ### 4.7 Outputs
 
 - **Stdout / stderr** of the task is captured by Upsun and surfaced via `upsun activity:log <id>`. This is the **audit trail** for Iteration 1.
-- **Branch on GitHub** named `agent/<timestamp>-<prompt-slug>`.
-- **Preview environment** automatically created by the existing GitHub integration when Upsun mirrors the new branch.
+- **Branch on GitHub** named `agent-<6 hex>-<prompt-slug>` (≤39 chars, no slashes).
+- **Pull request** opened against `main`, with the prompt as title and body.
+- **Active preview environment** built automatically from the PR by Upsun's GitHub integration (`build_pull_requests`).
+- **PR URL** printed to stdout at the end of the task log.
 
 ### 4.8 Trigger
 
 CLI form (the user, with their CLI session):
 
 ```bash
-# Trigger with the prompt in the payload (preferred path)
-upsunstg e:curl -p vdaznsr6gfmd2 -e main tasks/agent/run \
+# Trigger with the prompt in the variables.env envelope
+upsun e:curl -p vdaznsr6gfmd2 -e main tasks/agent/run \
   -X POST \
-  -d '{"prompt":"Change the homepage headline to '"'"'Hello from an agent'"'"'"}'
+  -d '{"variables":{"env":{"AGENT_PROMPT":"Change the homepage headline to Hello from an agent"}}}'
 
 # Watch
 upsun activity:list -p vdaznsr6gfmd2 -e main --limit 5
 upsun activity:log <ID>
 ```
 
-If the payload doesn't reach the task container, fall back to setting the prompt as an env var first:
-
-```bash
-upsun variable:update -p vdaznsr6gfmd2 -e main \
-  env:AGENT_PROMPT --value "Change the homepage headline to 'Hello from an agent'"
-upsunstg e:curl -p vdaznsr6gfmd2 -e main tasks/agent/run -X POST -d '{}'
-```
-
-Direct API form (equivalent to the preferred path):
+Direct API form (equivalent):
 
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $UPSUN_TOKEN" \
   https://api.upsun.com/projects/vdaznsr6gfmd2/environments/main/tasks/agent/run \
-  -d '{"prompt":"..."}'
+  -d '{"variables":{"env":{"AGENT_PROMPT":"..."}}}'
 ```
+
+The trigger response is a 202 with the activity embedded — see [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint).
 
 ### 4.9 Failure modes (acceptable for Iteration 1)
 
@@ -345,11 +310,12 @@ These shaped the spec above; documented so we can revisit them.
 
 Real things we don't yet know — to be answered by Iteration 1 itself or by checking with engineering.
 
-- **Q1.** Does the trigger payload reach the task container today? If yes, under what mechanism (env var name, file path, API callback)? The first triggered run answers this — see §4.2.
+- **Q1.** *Resolved.* Trigger payload uses `{"variables": {"env": {"<NAME>": "<VALUE>"}}}` (per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint)) and entries land as plain env vars in the task process. Confirmed empirically — the first successful task run picked up `AGENT_PROMPT` via the `variables.env.AGENT_PROMPT` payload.
 - **Q2.** What is the user-visible behavior when a second trigger fires while one is in flight? The docs mention a default cap of 3 parallel runs, but it's unclear whether requests above the cap queue, reject with an error, or block.
-- **Q3.** Does the GitHub integration treat a push from inside a task container identically to a push from a developer machine? Specifically: does it auto-create a preview environment, and does Upsun mirror the agent-pushed branch back into the project?
+- **Q3.** *Resolved.* The GitHub integration mirrors agent-pushed branches back to the project (confirmed via activity `e2fhnt5psbgzc`), but the resulting environment is **inactive** by default. Activating it requires either a manual `environment:activate`, or a PR flow with `build_pull_requests: true`. Iteration 1 takes the PR path: the agent opens a PR after pushing, and Upsun builds it as an active preview environment automatically.
 - **Q4.** What permissions does the user-token-authenticated trigger require? Is project-admin enough, or is there a finer-grained role we should use for production?
 - **Q5.** Why are `dependencies` *and* `stack` both rejected on tasks (`Unknown key`) even after the task capability is enabled? The flask app accepts both keys (single-runtime takes `dependencies`, composable image takes `stack`). On tasks, neither works, which means the only pip-free way to get `uv` (or any non-default Python tool) onto a task today is Astral's curl installer. Confirmed empirically with two failed deploys (composable 24.1 and composable 25.11). Worth raising with the team that owns the task config schema — this is likely a parity oversight in the new task type rather than an intentional restriction.
+- **Q6.** *Resolved.* Project-level env variables (`upsun variable:create env:X`) do **not** reach a running task slug until the environment is redeployed. Variables added before deploy are baked in; variables added after require an explicit redeploy. Worth flagging to engineering — the documented `--no-build`/`--no-deploy` defaults may be confusing for task-only consumers who expect immediate visibility on the next trigger.
 
 ---
 
