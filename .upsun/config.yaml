@@ -1,0 +1,29 @@
+applications:
+  flask:
+    source:
+      root: /
+    type: "python:3.12"
+
+    dependencies:
+      python3:
+        pip: "*"
+
+    hooks:
+      build: |
+        set -eux
+        pip install -r requirements.txt
+
+    web:
+      commands:
+        start: "gunicorn -w 2 -b localhost:$PORT app:app"
+      locations:
+        "/":
+          passthru: true
+
+routes:
+  "https://{default}/":
+    type: upstream
+    upstream: "flask:http"
+  "https://www.{default}/":
+    type: redirect
+    to: "https://{default}/"
