@@ -21,8 +21,8 @@ jobs:
       - name: Sync root project (with dev deps)
         run: uv sync --frozen
 
-      - name: Sync agent project
-        run: uv sync --frozen --directory agent
+      - name: Sync coding-agent project
+        run: uv sync --frozen --directory coding-agent
 
       - name: Ruff lint
         run: uv run ruff check .

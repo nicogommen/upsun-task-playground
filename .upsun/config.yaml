@@ -22,9 +22,9 @@ applications:
           passthru: true
 
 tasks:
-  agent:
+  coding-agent:
     source:
-      root: /agent
+      root: /coding-agent
     type: "python:3.14"
 
     # Workaround: the task config validator rejects both `dependencies` and

@@ -14,7 +14,7 @@ We grow the playground in small, demonstrable increments. This document specifie
 
 | # | Status | Title | Outcome |
 | - | ------ | ----- | ------- |
-| **1** | **Done (2026-05-08)** | **Visual Flask app + minimal agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
+| **1** | **Done (2026-05-08)** | **Visual Flask app + minimal coding-agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
 | 2 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
 | 3 | Pending | Agent triggers itself from the app | An app endpoint triggers the task using `PLATFORM_TASK_TOKEN` instead of a user-level token. |
 | 4 | Pending | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
@@ -22,13 +22,15 @@ We grow the playground in small, demonstrable increments. This document specifie
 
 ---
 
-## 2. Iteration 1 — Visual Flask app + minimal agent task
+## 2. Iteration 1 — Visual Flask app + minimal coding-agent task
 
 ### 2.1 Goals
 
 - A small Flask app with an actual UI (homepage with demo content) so visual changes are obvious.
-- An Upsun `task` container that, given a natural-language prompt, edits the codebase to satisfy that prompt, pushes the result to a new branch, and opens a pull request on GitHub.
+- An Upsun `task` container named **`coding-agent`** that, given a natural-language prompt, edits the codebase to satisfy that prompt, pushes the result to a new branch, and opens a pull request on GitHub.
 - The PR triggers an **active** preview environment via the GitHub integration's `build_pull_requests` setting. **The agent's job ends after the PR is opened.**
+
+The folder name (`coding-agent/`) and task name in the config are deliberately specific so future iterations can add other agent types (e.g. `review-agent/`, `test-agent/`) by dropping a new folder + a new `tasks.<name>` block alongside the existing one.
 
 ### 2.2 Out of scope for Iteration 1
 
@@ -41,8 +43,8 @@ We grow the playground in small, demonstrable increments. This document specifie
 
 ### 2.3 Success criteria
 
-- Running `upsun e:curl tasks/agent/run -X POST -d '{"variables":{"env":{"AGENT_PROMPT":"..."}}}'` creates an activity that completes without error.
-- A new branch named `agent-<6 hex>-<slug>` (≤39 chars, no slashes) appears on GitHub.
+- Running `upsun e:curl tasks/coding-agent/run -X POST -d '{"variables":{"env":{"AGENT_PROMPT":"..."}}}'` creates an activity that completes without error.
+- A new branch named `coding-<6 hex>-<slug>` (≤39 chars, no slashes) appears on GitHub.
 - A pull request against `main` is opened automatically by the agent.
 - The GitHub integration builds the PR as an **active** preview environment (`build_pull_requests`).
 - The preview environment URL serves the modified version of the homepage.
@@ -78,13 +80,13 @@ upsun-task-playground/
 ├── uv.lock                 # Resolved versions for the Flask app
 ├── templates/
 │   └── index.html          # Homepage (hero, features, footer)
-├── agent/
+├── coding-agent/
 │   ├── run.py              # Task entry point — the agent loop
 │   ├── tools.py            # Tool definitions exposed to the LLM
 │   ├── pyproject.toml      # anthropic SDK
 │   └── uv.lock             # Resolved versions for the task
 ├── .upsun/
-│   └── config.yaml         # flask app + agent task
+│   └── config.yaml         # flask app + coding-agent task
 ├── .github/workflows/
 │   └── ci.yml              # ruff + yamllint pipeline
 ├── .yamllint.yaml          # YAML lint config
@@ -128,20 +130,24 @@ Lock files (`uv.lock`, `agent/uv.lock`) are committed for reproducible builds. T
 
 ---
 
-## 4. Task specification (`agent`)
+## 4. Task specification (`coding-agent`)
 
 ### 4.1 Concept
 
-A single Upsun `task` container that runs the **agent runtime**. The agent runtime is a Python script using the Anthropic SDK with tool use. The task is triggered via the Upsun task-trigger API ([GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint)); the prompt is passed in the trigger payload under `variables.env.AGENT_PROMPT`. After making the change the agent opens a pull request, which the GitHub integration builds as an active preview environment.
+An Upsun `task` container named `coding-agent` that runs the **agent runtime**. The agent runtime is a Python script using the Anthropic SDK with tool use. The task is triggered via the Upsun task-trigger API ([GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint)); the prompt is passed in the trigger payload under `variables.env.AGENT_PROMPT`. After making the change the agent opens a pull request, which the GitHub integration builds as an active preview environment.
+
+The agent is one of potentially many — its folder is `coding-agent/` and the task is `tasks.coding-agent`. Future agents (e.g. `review-agent`, `test-agent`) sit alongside it under their own `<name>/` folders and `tasks.<name>` blocks.
 
 ### 4.2 Inputs
 
 | Input | Source | Notes |
 | ----- | ------ | ----- |
 | **`AGENT_PROMPT`** | **Trigger payload** (`variables.env.AGENT_PROMPT`) | The natural-language instruction. Per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), variables under `variables.env.<NAME>` land as plain env vars in the task process. Confirmed empirically. |
-| `ANTHROPIC_API_KEY` | Upsun sensitive env var (project, runtime-visible) | Bring-your-own LLM key. Requires a redeploy of `main` after creation for the value to reach a running task (see §7 Q6). |
-| `GITHUB_TOKEN` | Upsun sensitive env var (project, runtime-visible) | Fine-grained PAT on `nicogommen/upsun-task-playground` with **`Contents: read+write`** *and* **`Pull requests: read+write`**. Used to push the branch and open the PR. |
-| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Upsun env vars | Commit author. Defaults: `upsun-task-playground-agent` / `agent@playground.local`. |
+| `AGENT_MODEL` | Trigger payload (`variables.env.AGENT_MODEL`) **or** project env var | Optional. Anthropic model ID. If unset, defaults to `DEFAULT_MODEL` in `coding-agent/run.py` (currently `claude-haiku-4-5-20251001`). Trigger-payload value wins per run; project env var is a global override. |
+| `GITHUB_REPO` | Project env var (runtime-visible) | Required. Form: `<owner>/<name>` (e.g. `nicogommen/upsun-task-playground`). Used for both the clone URL and the PR API call. Replaces the previously hardcoded repo. |
+| `ANTHROPIC_API_KEY` | Project sensitive env var (runtime-visible) | Bring-your-own LLM key. Requires a redeploy of `main` after creation for the value to reach a running task (see §7 Q6). |
+| `GITHUB_TOKEN` | Project sensitive env var (runtime-visible) | Fine-grained PAT on the configured `GITHUB_REPO` with **`Contents: read+write`** *and* **`Pull requests: read+write`**. Used to push the branch and open the PR. |
+| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Project env vars | Commit author. Defaults: `upsun-task-playground-agent` / `agent@playground.local`. |
 
 The agent's `resolve_prompt()` still keeps a small fallback ladder (look for likely-named env vars, then a `task-input.json` file, then `AGENT_PROMPT`) but the primary path on Upsun today is `variables.env.AGENT_PROMPT` → `os.environ["AGENT_PROMPT"]`.
 
@@ -149,8 +155,8 @@ The agent's `resolve_prompt()` still keeps a small fallback ladder (look for lik
 
 1. Upsun creates a fresh container with the task's slug.
 2. Container starts, working directory is the task source root (`/app`); the repository contents are available (the slug, no `.git`).
-3. The agent runtime clones the repo fresh (`git clone` over HTTPS using `GITHUB_TOKEN`) into `/tmp/work` so it has full git history and a writable tree.
-4. Agent creates a branch `agent-<6 hex>-<slug>` (≤39 chars, no `/`).
+3. The agent runtime parses `GITHUB_REPO` into owner/name and clones the repo fresh (`git clone` over HTTPS using `GITHUB_TOKEN`) into `/tmp/work` so it has full git history and a writable tree.
+4. Agent creates a branch `coding-<6 hex>-<slug>` (≤39 chars, no `/`).
 5. Agent runs the LLM loop until either: the LLM emits a `stop_reason: end_turn`, the loop hits the iteration limit (default 25), or the timeout expires.
 6. Agent commits and pushes the branch.
 7. Agent opens a pull request against `main` via the GitHub REST API (stdlib `urllib`, no extra deps). The PR title encodes the prompt; the body links the prompt and the source.
@@ -163,9 +169,9 @@ Added to `.upsun/config.yaml`:
 
 ```yaml
 tasks:
-  agent:
+  coding-agent:
     source:
-      root: /agent
+      root: /coding-agent
     type: "python:3.14"
     hooks:
       build: |
@@ -181,7 +187,7 @@ tasks:
         source: "tmp"
 ```
 
-- `source.root: /agent` keeps the task's code separate from the Flask app.
+- `source.root: /coding-agent` keeps the task's code separate from the Flask app and from any future agent folders.
 - **uv install path differs from the flask app — and not by choice.** The task validator rejects both `dependencies` (the app's path) and `stack` (the composable image's path) with `Unknown key`, even with the task capability enabled. Astral's official installer is the only pip-free option that works today. The flask app stays on `dependencies.python3.uv: "*"`. See §7 Q5 — both gaps are real findings from this experiment, to be raised with the schema owners.
 - `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - Ruff's `target-version` is intentionally pinned to `py313` even though both apps deploy on Python 3.14. The newer "unparenthesized except clauses" syntax is a 3.14-only feature; pinning ruff lower keeps the source portable and prevents `ruff format` from stripping parens that would then break a 3.13 fallback. Cheap insurance.
@@ -192,30 +198,34 @@ tasks:
 
 ### 4.5 Agent runtime
 
-Located at `agent/run.py`. Pseudocode (the contract; see the file for the full implementation):
+Located at `coding-agent/run.py`. Pseudocode (the contract; see the file for the full implementation):
 
 ```python
 import os, secrets, subprocess, anthropic, urllib.request
 from tools import TOOLS, dispatch_tool
 
-prompt = resolve_prompt()  # variables.env.AGENT_PROMPT (see §4.2)
-client = anthropic.Anthropic()
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"  # latest haiku — cheapest default
+BRANCH_PREFIX = "coding"
+
+owner, name = get_repo()                          # parse GITHUB_REPO env var
+model = os.environ.get("AGENT_MODEL") or DEFAULT_MODEL
+prompt = resolve_prompt()                          # variables.env.AGENT_PROMPT
 
 # 1. Clone fresh repo with credentials
 workdir = "/tmp/work"
-clone_url = f"https://x-access-token:{os.environ['GITHUB_TOKEN']}@github.com/nicogommen/upsun-task-playground.git"
+clone_url = f"https://x-access-token:{os.environ['GITHUB_TOKEN']}@github.com/{owner}/{name}.git"
 subprocess.run(["git", "clone", clone_url, workdir], check=True)
 
-# 2. Branch name: agent-<6hex>-<slug<=26>, total <=39 chars, no slashes
-branch = f"agent-{secrets.token_hex(3)}-{slugify(prompt, max_len=26)}"
+# 2. Branch name: coding-<6hex>-<slug<=25>, total <=39 chars, no slashes
+branch = f"{BRANCH_PREFIX}-{secrets.token_hex(3)}-{slugify(prompt)}"
 subprocess.run(["git", "-C", workdir, "checkout", "-b", branch], check=True)
 
-# 3. Configure git author, run the LLM loop, commit, push
-# (claude-sonnet-4-6, 25 turn limit, stop on end_turn) ...
+# 3. Configure git author, run the LLM loop with `model`, commit, push.
+# (25 turn limit, stop on end_turn) ...
 
 # 4. Open the PR via GitHub REST API (stdlib urllib)
 urllib.request.Request(
-    "https://api.github.com/repos/nicogommen/upsun-task-playground/pulls",
+    f"https://api.github.com/repos/{owner}/{name}/pulls",
     data=json.dumps({"title": ..., "head": branch, "base": "main", "body": ...}).encode(),
     headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", ...},
 )
@@ -237,7 +247,7 @@ Edits-only via `write_file` (no diff/patch tool) keeps the loop simple. `run_bas
 ### 4.7 Outputs
 
 - **Stdout / stderr** of the task is captured by Upsun and surfaced via `upsun activity:log <id>`. This is the **audit trail** for Iteration 1.
-- **Branch on GitHub** named `agent-<6 hex>-<prompt-slug>` (≤39 chars, no slashes).
+- **Branch on GitHub** named `coding-<6 hex>-<prompt-slug>` (≤39 chars, no slashes).
 - **Pull request** opened against `main`, with the prompt as title and body.
 - **Active preview environment** built automatically from the PR by Upsun's GitHub integration (`build_pull_requests`).
 - **PR URL** printed to stdout at the end of the task log.
@@ -248,9 +258,14 @@ CLI form (the user, with their CLI session):
 
 ```bash
 # Trigger with the prompt in the variables.env envelope
-upsun e:curl -p vdaznsr6gfmd2 -e main tasks/agent/run \
+upsun e:curl -p vdaznsr6gfmd2 -e main tasks/coding-agent/run \
   -X POST \
   -d '{"variables":{"env":{"AGENT_PROMPT":"Change the homepage headline to Hello from an agent"}}}'
+
+# Override the default model on a single run
+upsun e:curl -p vdaznsr6gfmd2 -e main tasks/coding-agent/run \
+  -X POST \
+  -d '{"variables":{"env":{"AGENT_PROMPT":"...","AGENT_MODEL":"claude-sonnet-4-6"}}}'
 
 # Watch
 upsun activity:list -p vdaznsr6gfmd2 -e main --limit 5
@@ -262,7 +277,7 @@ Direct API form (equivalent):
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $UPSUN_TOKEN" \
-  https://api.upsun.com/projects/vdaznsr6gfmd2/environments/main/tasks/agent/run \
+  https://api.upsun.com/projects/vdaznsr6gfmd2/environments/main/tasks/coding-agent/run \
   -d '{"variables":{"env":{"AGENT_PROMPT":"..."}}}'
 ```
 
@@ -299,9 +314,11 @@ These shaped the spec above; documented so we can revisit them.
 4. **GitHub PAT now, scoped credentials later.** A PAT in `GITHUB_TOKEN` is the simplest. `PLATFORM_TASK_TOKEN` (per the [App task trigger auth RFC](../../rfc-app-task-trigger-authentication.md)) is the right answer for Iteration 3, when the trigger comes from the app itself. Document but don't build it now.
 5. **Four tools, not many.** `read_file`, `list_dir`, `write_file`, `run_bash`. Easy to reason about, easy to lock down later. `run_bash` is the escape hatch; we can remove it once we have richer tools.
 6. **Don't wait for the deploy.** Push and exit is the contract for Iteration 1. Adding "wait + curl + report" is a clean Iteration 2 because it's a strict superset.
-7. **Branch name encodes the prompt.** `agent-<6 hex>-<slug>` (≤39 chars, no slashes, alphanumeric+dash). Random hex keeps each run unique even if the same prompt fires twice; the slug keeps PR titles and Upsun env names human-readable.
+7. **Branch name encodes the agent type and the prompt.** `coding-<6 hex>-<slug>` (≤39 chars, no slashes, alphanumeric+dash). The prefix identifies which agent created the branch — useful when multiple agent types coexist. Random hex keeps each run unique; the slug keeps PR titles human-readable.
 8. **Anthropic SDK, not Claude Code CLI.** Per your call — better for learning. The trade-off is we write the loop ourselves; the upside is we own every step and can instrument it.
-9. **Sonnet 4.6, not Opus.** Cheaper per token and fast enough for small visual edits. We'll move to Opus only if we see Sonnet fail on tasks we expect to succeed.
+9. **Default to Haiku, override per-run.** The default model is `claude-haiku-4-5-20251001` — the cheapest current Anthropic model, and good enough for the small visual prompts Iteration 1 targets. Override per run via `variables.env.AGENT_MODEL` (e.g. switch to `claude-sonnet-4-6` for trickier prompts) or globally via a project env var. Avoids paying Opus / Sonnet rates by default.
+10. **Agent identity in folder + task name.** `coding-agent/` and `tasks.coding-agent` are deliberately specific so adding more agents (`review-agent/`, `test-agent/`, …) is a copy-and-rename, not a refactor.
+11. **GitHub repo via env var, not hardcoded.** `GITHUB_REPO` (`<owner>/<name>`) is read at runtime in both the clone URL and the PR API call. Decouples the agent runtime from this specific playground repo so the same code can target a different repo with no code change.
 
 ---
 

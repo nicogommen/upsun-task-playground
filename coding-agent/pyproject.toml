@@ -1,0 +1,8 @@
+[project]
+name = "upsun-task-playground-coding-agent"
+version = "0.1.0"
+description = "Coding-agent task container for the Upsun task playground."
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.55.0",
+]

@@ -14,5 +14,5 @@ rules:
 
 ignore: |
   .venv/
-  agent/.venv/
+  coding-agent/.venv/
   node_modules/
