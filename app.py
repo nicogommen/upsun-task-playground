@@ -1,14 +1,11 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 
 app = Flask(__name__)
 
 
 @app.route("/")
 def index():
-    return jsonify(
-        message="Hello from Flask on Upsun!",
-        project="upsun-task-playground",
-    )
+    return render_template("index.html")
 
 
 @app.route("/health")
