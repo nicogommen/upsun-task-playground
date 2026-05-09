@@ -35,6 +35,17 @@ applications:
         set -eux
         uv sync --frozen --no-dev
 
+    # Scopes the bearer tokens the auth proxy at localhost:8200 will mint for
+    # this app: task/operate to trigger and manage coding-agent runs, env/view
+    # for the activity poll + preview-env discovery in admin/upsun_client.py.
+    # Per ITERATION-2 §3.4 / §4.6 and the authorizations doc.
+    authorizations:
+      - type: task
+        resource: coding-agent
+        action: operate
+      - type: env
+        action: view
+
     variables:
       env:
         SESSION_LIFETIME_DAYS: "7"
