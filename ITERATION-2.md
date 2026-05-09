@@ -16,7 +16,7 @@ A running record of resolved decisions. Listed once, never relitigated. Detail i
 |---|---|---|---|
 | **D1** | C1 | Auth via `authorizations:` + the per-container OAuth2 proxy at `localhost:8200`. No user PAT in production. | §3.4 |
 | **D2** | C2 | Restructure into `frontend/`, `admin/`, `coding-agent/` — each Upsun app/task in its own folder. | §5 |
-| **D3** | C3 | Admin runs in every environment; triggers always target `main` via `UPSUN_TARGET_ENVIRONMENT`. | §3.2, §4.7 |
+| **D3** | C3 | Admin triggers tasks in its **own** environment (`$PLATFORM_BRANCH`). Auth-proxy tokens are env-scoped by design, so cross-env triggering is deferred (§7.3) but the `Run.target_environment` field is per-run so we don't paint ourselves into a corner. | §3.2, §3.4, §7.3, §9 Q-iter2-5 |
 | **D4** | N4 | `admin` is FastAPI + uvicorn (ASGI). `frontend` stays Flask + gunicorn (WSGI). Deliberate multi-stack showcase. | §3.1, §4.1 |
 | **D5** | I1 | Roll-our-own auth middleware (~40 lines, no third-party auth library). | §4.5 |
 | **D6** | I2 | Poll task activity to completion, **then** poll preview env. Sequential, not parallel. | §6.2, §6.3 |
@@ -77,7 +77,7 @@ routes:
 ```
 
 - Production admin URL: `https://admin.<env>.<region>.platformsh.site`.
-- Preview environments get their own pair (`https://<envid>.…` for frontend, `https://admin.<envid>.…` for admin). Per C3, admin in preview envs is functional but always triggers tasks against `main`.
+- Preview environments get their own pair (`https://<envid>.…` for frontend, `https://admin.<envid>.…` for admin). Per D3, each admin instance triggers tasks in its own env (preview-env admin → preview-env coding-agent). Cross-env triggering is deferred to §7.3.
 
 ### 3.3 Authentication model
 
@@ -109,10 +109,10 @@ The admin app uses Upsun's per-container auth proxy and the platform's `authoriz
        return body["access_token"], time.monotonic() + int(body.get("expires_in", 60))
    ```
    Default TTL is 60 s; we ask for the max (900 s) and cache the token in process memory, refreshing when the cached expiry is within ~5 s of `time.monotonic()`.
-3. Admin POSTs to `https://api.upsun.com/projects/$PLATFORM_PROJECT/environments/$UPSUN_TARGET_ENVIRONMENT/tasks/coding-agent/run` with `Authorization: Bearer <token>` and body `{"variables":{"env":{"AGENT_PROMPT":"..."}}}`.
+3. Admin POSTs to `https://api.upsun.com/projects/$PLATFORM_PROJECT/environments/<target_env>/tasks/coding-agent/run` with `Authorization: Bearer <token>` and body `{"variables":{"env":{"AGENT_PROMPT":"..."}}}`.
 4. The 202 response carries the activity. Admin extracts `activity_id` and starts polling.
 
-Project id is read from `$PLATFORM_PROJECT` (a standard Upsun runtime var). Target env is forced to `main` via `$UPSUN_TARGET_ENVIRONMENT` regardless of which env admin itself runs in (per C3).
+Project id is read from `$PLATFORM_PROJECT` (a standard Upsun runtime var). The `<target_env>` is the env admin itself runs in (`$PLATFORM_BRANCH`) — auth-proxy tokens are scoped to their issuing env per the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations) ("a token issued in one environment cannot act on another"). Cross-env triggering (admin-on-preview → main, admin-on-main → preview, etc.) needs a different mechanism; we keep `target_environment` as a per-run field so the data model is open. See §7.3.
 
 Polling lifecycle: see §6.
 
@@ -296,7 +296,6 @@ applications:
     variables:
       env:
         SESSION_LIFETIME_DAYS: "7"
-        UPSUN_TARGET_ENVIRONMENT: "main"
     web:
       commands:
         start: ".venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT"
@@ -322,11 +321,10 @@ The `coding-agent` task block stays as in iteration 1 (`source.root: /coding-age
 | `ADMIN_USERNAME` | env | no | Defaults to `admin`. |
 | `ADMIN_PASSWORD_HASH` | sensitive | yes | Argon2 hash. Generate with `uv run --directory admin python -m passwordhash <password>`. |
 | `SECRET_KEY` | sensitive | yes | ≥32 random bytes for Starlette `SessionMiddleware` cookie signing. `python -c 'import secrets; print(secrets.token_hex(32))'`. |
-| `UPSUN_TARGET_ENVIRONMENT` | env | no | Defaults to `main`. Set via `variables.env` in `.upsun/config.yaml` so admin always targets prod regardless of which env it runs in (per C3). |
 | `SESSION_LIFETIME_DAYS` | env | no | Defaults to 7. |
 | `UPSUN_API_TOKEN` | sensitive | local dev only | Optional override: if set, `upsun_client.py` skips the auth proxy and uses this PAT directly. Lets `uv run python app.py` work outside Upsun. **Not set in production.** |
 
-**No project-id env var is needed.** The runtime injects `PLATFORM_PROJECT` and `PLATFORM_BRANCH`; admin reads `PLATFORM_PROJECT` directly. Bearer tokens are fetched from `http://localhost:8200/oauth2/token` (no env var either).
+**No project-id or target-env var is needed.** The runtime injects `PLATFORM_PROJECT` and `PLATFORM_BRANCH`; admin reads both directly. Target env defaults to `$PLATFORM_BRANCH` (the admin's own env, per D3). Bearer tokens are fetched from `http://localhost:8200/oauth2/token` (no env var either).
 
 Per SPEC §7 Q6: project-level sensitive env vars don't reach a running container until the environment is redeployed. After creating `ADMIN_PASSWORD_HASH` or `SECRET_KEY`, redeploy `main` once before they're visible to the admin app.
 
@@ -341,7 +339,7 @@ ADMIN_PASSWORD_HASH="$(uv run --directory admin python -m passwordhash 'devpass'
 SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" \
 UPSUN_API_TOKEN="$UPSUN_API_TOKEN"            \
 PLATFORM_PROJECT="vdaznsr6gfmd2"              \
-UPSUN_TARGET_ENVIRONMENT="main"               \
+PLATFORM_BRANCH="main"                        \
 uv run uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 ```
 
@@ -383,10 +381,10 @@ The agent in iter 1 was given prompts that referenced "the homepage." After the 
 
 1. User logs in, lands on `/chat`.
 2. User types a prompt and submits.
-3. Admin creates a `Run(id=uuid4, prompt, status='triggering', created_at=now)` and stores it.
+3. Admin creates a `Run(id=uuid4, prompt, status='triggering', target_environment=$PLATFORM_BRANCH, created_at=now)` and stores it. `target_environment` is set per-run rather than baked-in so a future selector (§7.3) can override it.
 4. Admin fetches (or reuses a cached) bearer token from the auth proxy at `localhost:8200/oauth2/token`.
-5. Admin POSTs to `tasks/coding-agent/run` with `Authorization: Bearer <token>` and body `{"variables":{"env":{"AGENT_PROMPT":"..."}}}`.
-6. On 202: parse `activity_id` from the response, update the `Run` to `status='running'`, persist `activity_id` and `target_environment`.
+5. Admin POSTs to `https://api.upsun.com/projects/$PLATFORM_PROJECT/environments/<target_env>/tasks/coding-agent/run` with `Authorization: Bearer <token>` and body `{"variables":{"env":{"AGENT_PROMPT":"..."}}}`.
+6. On 202: parse `activity_id` from the response, update the `Run` to `status='running'`, persist `activity_id`.
 7. On non-2xx: update the `Run` to `status='failed'`, store the response body as `error`. Render the failure card.
 8. Render the run-card fragment; HTMX swaps it into the runs list.
 
@@ -472,6 +470,24 @@ HTMX polling is a v1 stand-in. FastAPI streams natively via `StreamingResponse` 
 
 This is one of the main reasons we picked FastAPI in N4. No framework swap required.
 
+### 7.3 Cross-env triggering (deferred)
+
+The auth-proxy issues env-scoped tokens by design ("a token issued in one environment cannot act on another", per the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 lives with that: each admin triggers in its own env.
+
+Use cases we'd like to keep open for later:
+
+- **Admin-on-preview → arbitrary preview env**: pick which preview to test a prompt against from a single admin instance.
+- **Admin-on-main → preview env**: production admin nudges a specific preview env to verify a fix.
+- **Admin-on-X → admin-on-Y delegation**: the user picks env Y in the UI; the X admin asks the Y admin to run the task locally in Y. Y is the one that actually issues the task call from its own auth proxy.
+
+Candidate paths to unlock this without compromising the "no long-lived PAT in production" rule (D1):
+
+1. **Admin-to-admin delegation over the public URL** (probably the cleanest): admin-X POSTs `{prompt, idempotency_key}` to `https://admin.<envY>.…/internal/runs`, signed with a shared `INTERNAL_HMAC_KEY`. Admin-Y verifies the signature, then triggers the task from its *own* env-scoped token. Each admin keeps the proxy-only contract; the cross-env hop is just an HTTPS call between two admins.
+2. **Upsun adds cross-env scopes to `authorizations`**: schema change on the platform side. Out of our control.
+3. **Per-environment service account PATs** stored as project-scoped sensitive vars: weaker security posture, sidesteps the proxy entirely. Avoid unless 1 and 2 prove infeasible.
+
+The v1 data model already accommodates all three: `Run.target_environment` is a per-run string, and `upsun_client.trigger_task(env_id, ...)` takes the env id as a parameter rather than a class-level constant. No code in the route layer or storage layer assumes "self only".
+
 ---
 
 ## 8. Success criteria
@@ -492,5 +508,6 @@ To be filled in as we build, in the same shape as SPEC §7. Likely candidates:
 - **Q-iter2-1.** Exact field on the environment object that ties a PR-built env to its source branch (`title`? `name`? `head_ref`?). Needs an empirical lookup against a live preview env.
 - **Q-iter2-2.** Whether single-worker is enforceable via Upsun config or only by how we invoke `uvicorn` in the start command. (Plain `uvicorn app:app` defaults to one worker, so this is mostly a doc question.)
 - **Q-iter2-3.** Whether project-level sensitive env vars set on `main` are visible to a preview env's `admin` app, or whether each preview env needs its own (likely the former — but worth confirming).
-- **Q-iter2-4.** Exact JSON shape of the `localhost:8200/oauth2/token` response (specifically: is the access token always under `access_token`? Does it include `expires_in` we should trust over the requested `x-token-ttl`?). The docs example assumes `access_token`; verify empirically.
-- **Q-iter2-5.** Does an auth-proxy-issued token grant the admin app permission to operate on tasks in **environments other than the one it's running in**? If yes, C3 holds (preview-env admin can trigger tasks on `main`). If no, we need the C3 override (gate admin to `PLATFORM_BRANCH == "main"`). The published example uses `$PLATFORM_BRANCH` for the env, suggesting same-env was the intended pattern.
+- **Q-iter2-4.** *Resolved.* The auth proxy follows the OAuth2 standard response shape: `{"access_token", "expires_in", "token_type"}` with a 900s expiry. Documented in the [authentication doc](https://developer.upsun.com/api/rest/authentication.md) and confirmed for the proxy by the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations). `expires_in` is authoritative — trust it over the requested `x-token-ttl`.
+- **Q-iter2-5.** *Resolved against C3.* Auth-proxy tokens are env-scoped by design: "a token issued in one environment cannot act on another" ([authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 admin triggers in its own env (D3); cross-env triggering moves to §7.3.
+- **Finding (informational).** The new task container is in **private beta** and requires a per-project support ticket to enable. Worth flagging in the playground README so anyone trying to reproduce this setup knows to request enablement first.
