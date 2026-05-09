@@ -1,8 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Chat{% endblock %}
 {% block content %}
-<div class="max-w-5xl mx-auto w-full px-6 py-12">
-  <h1 class="text-2xl font-semibold mb-2">Chat</h1>
-  <p class="text-slate-600">Authenticated. The prompt + run-history UI lands in iteration 2 step 6.</p>
+<div class="flex-1 flex">
+  {# Reserved for the future session list (iter 2.x). Hidden in v1. #}
+  <aside class="hidden lg:block lg:w-64 border-r border-slate-200 bg-white"></aside>
+
+  <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
+    <h1 class="text-2xl font-semibold mb-1">Run the coding agent</h1>
+    <p class="text-sm text-slate-600 mb-6">
+      Type a prompt and submit. The agent edits the codebase, opens a PR, and Upsun builds a preview environment from it.
+    </p>
+
+    <form action="/chat/runs" method="post"
+          hx-post="/chat/runs" hx-target="#runs" hx-swap="afterbegin"
+          hx-on::after-request="if(event.detail.successful) this.reset()"
+          class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
+      <textarea name="prompt" required rows="3"
+                placeholder="e.g. Change the homepage headline to Hello from an agent"
+                class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"></textarea>
+      <div class="flex justify-end">
+        <button type="submit"
+                class="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+          Run
+        </button>
+      </div>
+    </form>
+
+    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 mt-10 mb-3">Runs</h2>
+    <div id="runs" class="space-y-3">
+      {% for run in runs %}
+        {% include "_run_card.html" %}
+      {% else %}
+        <p class="text-sm text-slate-500">No runs yet. Submit a prompt above to start one.</p>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 {% endblock %}

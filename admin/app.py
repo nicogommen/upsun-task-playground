@@ -1,15 +1,60 @@
-import os
+"""Admin app: FastAPI front end for triggering coding-agent and watching runs.
 
+Lifespan owns the shared httpx.AsyncClient and the UpsunClient so they're
+created once and closed cleanly on shutdown. Each request reaches the client
+via request.app.state.upsun.
+
+Status state machine in step 6a: triggering → running → task_complete | failed.
+The task_complete → succeeded transition (with preview_url) lands in step 6b
+once the agent prints the BRANCH= marker (step 7).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import uuid
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+
+import httpx
+import storage
 from auth import verify_password
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from upsun_client import UpsunClient
 
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
+CODING_AGENT_TASK = "coding-agent"
 PUBLIC_PATHS = frozenset({"/login", "/health"})
+
+# Machine-readable PR marker (ITERATION-2 §6.5). The legacy "PR opened: <url>"
+# fallback is for runs triggered before step 7 lands; remove after step 7.
+_PR_URL_RE = re.compile(r"PR_URL=(https?://\S+)")
+_PR_LEGACY_RE = re.compile(r"PR opened:\s*(https?://\S+)")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    http = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
+    project_id = os.environ.get("PLATFORM_PROJECT", "")
+    pat = os.environ.get("UPSUN_API_TOKEN") or None
+    if not project_id:
+        logger.warning("PLATFORM_PROJECT not set — task trigger will fail until provided")
+    app.state.upsun = UpsunClient(http, project_id=project_id, pat=pat)
+    app.state.http = http
+    try:
+        yield
+    finally:
+        await http.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory="templates")
 
 
 # Register the auth gate BEFORE SessionMiddleware: Starlette inserts each
@@ -33,6 +78,44 @@ app.add_middleware(
     https_only=os.environ.get("SESSION_COOKIE_SECURE", "true").lower() == "true",
     max_age=int(os.environ.get("SESSION_LIFETIME_DAYS", "7")) * 86400,
 )
+
+
+def _current_env() -> str:
+    """Default target env for trigger and polling — admin's own env (D3)."""
+    return os.environ.get("PLATFORM_BRANCH", "main")
+
+
+def _ensure_session_id(request: Request) -> str:
+    sid = request.session.get("chat_session_id")
+    if not sid:
+        sid = str(uuid.uuid4())
+        request.session["chat_session_id"] = sid
+    return sid
+
+
+def _activity_log(activity: dict) -> str | None:
+    # Try common shapes; pin one down empirically once we see a real activity.
+    for key in ("log", "text", "stdout"):
+        v = activity.get(key)
+        if isinstance(v, str):
+            return v
+    payload = activity.get("payload") or {}
+    for key in ("log", "stdout"):
+        v = payload.get(key)
+        if isinstance(v, str):
+            return v
+    return None
+
+
+def _extract_pr_url(activity_log: str | None) -> str | None:
+    if not activity_log:
+        return None
+    m = _PR_URL_RE.search(activity_log) or _PR_LEGACY_RE.search(activity_log)
+    return m.group(1) if m else None
+
+
+def _render_card(request: Request, run: storage.Run) -> Response:
+    return templates.TemplateResponse(request, "_run_card.html", {"run": run})
 
 
 @app.get("/health")
@@ -78,4 +161,85 @@ async def logout(request: Request) -> RedirectResponse:
 
 @app.get("/chat")
 async def chat(request: Request) -> Response:
-    return templates.TemplateResponse(request, "chat.html", {})
+    sid = _ensure_session_id(request)
+    runs = storage.list_runs(session_id=sid)
+    return templates.TemplateResponse(request, "chat.html", {"runs": runs})
+
+
+@app.post("/chat/runs")
+async def submit_run(
+    request: Request,
+    prompt: str = Form(...),
+) -> Response:
+    sid = _ensure_session_id(request)
+    target = _current_env()
+    run = storage.Run(
+        id=str(uuid.uuid4()),
+        session_id=sid,
+        prompt=prompt,
+        status="triggering",
+        target_environment=target,
+        created_at=datetime.now(UTC),
+    )
+    storage.save_run(run)
+
+    client: UpsunClient = request.app.state.upsun
+    try:
+        body = await client.trigger_task(target, CODING_AGENT_TASK, {"AGENT_PROMPT": prompt})
+    except (httpx.HTTPError, KeyError) as exc:
+        logger.exception("trigger_task failed for run %s", run.id)
+        run = storage.update_run(
+            run.id,
+            status="failed",
+            error=str(exc),
+            completed_at=datetime.now(UTC),
+        )
+        return _render_card(request, run)
+
+    activity_id = body.get("id") or (body.get("activity") or {}).get("id")
+    run = storage.update_run(
+        run.id,
+        status="running",
+        activity_id=activity_id,
+    )
+    return _render_card(request, run)
+
+
+@app.get("/chat/runs/{run_id}")
+async def poll_run(request: Request, run_id: str) -> Response:
+    run = storage.get_run(run_id)
+    if run is None:
+        return Response(status_code=404)
+    terminal = run.status in ("succeeded", "failed", "task_complete")
+    if terminal or not run.activity_id:
+        return _render_card(request, run)
+
+    client: UpsunClient = request.app.state.upsun
+    try:
+        activity = await client.get_activity(run.target_environment, run.activity_id)
+    except httpx.HTTPError:
+        logger.exception("get_activity failed for run %s", run.id)
+        return _render_card(request, run)
+
+    state = activity.get("state")
+    result = activity.get("result")
+    if state == "complete":
+        log_text = _activity_log(activity)
+        pr_url = _extract_pr_url(log_text)
+        now = datetime.now(UTC)
+        if result == "success":
+            run = storage.update_run(
+                run.id,
+                status="task_complete",
+                pr_url=pr_url,
+                completed_at=now,
+            )
+        else:
+            run = storage.update_run(
+                run.id,
+                status="failed",
+                error=f"task {result or 'failed'}",
+                pr_url=pr_url,
+                completed_at=now,
+            )
+    return _render_card(request, run)
