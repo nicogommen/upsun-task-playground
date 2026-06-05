@@ -15,7 +15,6 @@ from typing import Literal
 RunStatus = Literal[
     "triggering",
     "running",
-    "task_complete",
     "succeeded",
     "failed",
 ]
@@ -39,8 +38,6 @@ class Run:
     activity_id: str | None = None
     branch_name: str | None = None
     pr_url: str | None = None
-    preview_env_id: str | None = None
-    preview_url: str | None = None
     error: str | None = None
     completed_at: datetime | None = None
 

@@ -1,9 +1,11 @@
 """Async Upsun API client for the admin app.
 
-A single class wrapping httpx.AsyncClient with three concerns:
+A single class wrapping httpx.AsyncClient with two concerns:
 - Bearer-token acquisition (auth proxy in production, PAT for local dev).
 - Task trigger + activity lookup (ITERATION-2 §3.4, §6).
-- Environment listing for preview-env discovery (§6.3).
+
+Preview-env discovery is not here: the env-scoped token can't read a sibling
+env (Q-iter2-8), so v1 doesn't surface the preview URL. It returns with §7.3.
 
 Design notes:
 - The HTTP client is injected, not owned. FastAPI manages its lifespan via
@@ -136,17 +138,3 @@ class UpsunClient:
         )
         resp.raise_for_status()
         return _join_log_stream(resp.text)
-
-    async def get_environment(self, env_id: str) -> dict | None:
-        """Fetch one environment by id, or None if it doesn't exist yet.
-
-        Q-iter2-1: the PR-built preview env is keyed `pr-<number>` (active),
-        not the branch name (the branch env is created inactive). The admin
-        derives `pr-<number>` from the PR URL and reads this env directly.
-        """
-        path = f"/projects/{self._project_id}/environments/{env_id}"
-        resp = await self._request("GET", path)
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.json()

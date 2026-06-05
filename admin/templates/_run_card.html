@@ -20,14 +20,6 @@
         </svg>
         Agent is working…
       </span>
-    {% elif run.status == "task_complete" %}
-      <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">
-        <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
-          <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" class="opacity-75"></path>
-        </svg>
-        Agent finished, building preview…
-      </span>
     {% elif run.status == "succeeded" %}
       <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium">
         Done
@@ -43,11 +35,6 @@
   {% if run.pr_url %}
     <p class="mt-3 text-sm">
       <a class="text-indigo-600 hover:underline font-medium" href="{{ run.pr_url }}" target="_blank" rel="noopener">View PR ↗</a>
-    </p>
-  {% endif %}
-  {% if run.preview_url %}
-    <p class="mt-1 text-sm">
-      <a class="text-indigo-600 hover:underline font-medium" href="{{ run.preview_url }}" target="_blank" rel="noopener">Open preview ↗</a>
     </p>
   {% endif %}
   {% if run.error %}

@@ -397,14 +397,13 @@ The agent in iter 1 was given prompts that referenced "the homepage." After the 
   - `state in {"pending", "in_progress"}` → unchanged.
 - Once `status` is `task_complete`, the same poll endpoint transitions to environment polling.
 
-### 6.3 Preview environment polling
+### 6.3 Preview environment display (deferred to §7.3)
 
-Revised against Q-iter2-1 (the original branch-matching plan was wrong, see §9):
+Originally this section polled the `pr-<number>` env for its public URL. That is blocked in v1 by env-scoped tokens (Q-iter2-8): the admin runs in `main` and cannot read a sibling env, and the URL hash is not reproducible from the name. So v1 does not surface the preview URL in the admin.
 
-- The PR built by the GitHub integration deploys as the environment `pr-<number>`, parent `main`. Admin parses the PR number from the agent's `PR_URL` marker (`/pull/(\d+)`) and reads that env directly via `GET /projects/.../environments/pr-<number>` (`get_environment`). No environment listing or branch matching.
-- A `404` means the env isn't built yet (keep polling). Once it exists and `env["status"] == "active"`, read `env["_links"]["public-url"]["href"]` into `preview_url` and set `status='succeeded'`.
-- If the run has no PR URL at all (e.g. the agent made no changes), there's no preview to wait for, so the run goes straight to `succeeded`.
-- Deploy-failure detection (a `pr-<number>` env that never reaches `active`) is not handled in v1. The run stays in `task_complete` and keeps polling, Acceptable for the single-tenant playground, revisit if it bites.
+- When the task activity completes with `result == "success"`, admin fetches the log, extracts the `PR_URL` and `BRANCH` markers, and sets the run straight to `succeeded`. No preview-env read.
+- The UI shows the PR link. The preview URL is reachable from the GitHub integration's PR comment.
+- Surfacing the preview URL inside the admin returns once cross-env access exists (§7.3).
 
 ### 6.4 Status states & UI
 
@@ -412,9 +411,10 @@ Revised against Q-iter2-1 (the original branch-matching plan was wrong, see §9)
 |---|---|---|
 | `triggering` | "Starting…" spinner | every 5s |
 | `running` | "Agent is working…" + activity link | every 5s |
-| `task_complete` | "Agent finished. Building preview…" + PR link | every 5s |
-| `succeeded` | "Done." + PR link + **Open preview** button | stopped |
+| `succeeded` | "Done." + PR link | stopped |
 | `failed` | Red banner, error message, retry button | stopped |
+
+(`task_complete` was removed with Q-iter2-8: there is no preview-build step the admin can observe, so the run transitions `running → succeeded` directly. The **Open preview** button returns with §7.3.)
 
 ### 6.5 Required change to the agent
 
@@ -515,4 +515,5 @@ To be filled in as we build, in the same shape as SPEC §7. Likely candidates:
 - **Q-iter2-5.** *Resolved against C3.* Auth-proxy tokens are env-scoped by design: "a token issued in one environment cannot act on another" ([authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 admin triggers in its own env (D3); cross-env triggering moves to §7.3.
 - **Q-iter2-6.** *Resolved (2026-06-05).* The trigger 202 body is `{"status": "created", "_embedded": {"activities": [{...}]}}` (GIT-857). The activity id is at `_embedded.activities[0].id`, not a top-level `id` or `activity.id`. The original parse guessed the latter, so `activity_id` was always `None` and polling never started (runs stuck on "running" forever). Fixed in step 6a, confirmed live.
 - **Q-iter2-7.** *Resolved (2026-06-05).* The task stdout is **no longer inline on the activity object**. `GET .../activities/{id}` returns metadata only: `state`, `result`, `text` (the human description, not stdout), and a deprecated `log` placeholder ("available in the streaming logs endpoint. Update your API client."). The real log is a separate call: `GET /projects/{project}/environments/{env}/activities/{id}/log?start_at=0&max_items=0&max_delay=-1` (the env-scoped and project-level paths both return 200). Response is `application/x-json-stream` (NDJSON): one `{"_id": N, "data": {"timestamp", "message"}}` per line, terminated by `{"_id": N, "seal": true}`. `max_delay=-1` returns immediately rather than long-polling. Consequence: PR/branch marker extraction needs this second call and must reassemble the `data.message` fields, then run the regexes. The old `_activity_log()` that read fields off the activity object could never have worked.
+- **Q-iter2-8.** *Resolved (2026-06-05) — changes §6.3.* The preview-env read (`GET .../environments/pr-<number>`) is a **cross-environment** call, and the auth-proxy token is env-scoped (Q-iter2-5). From the admin running in `main` it returns **403 Forbidden**, not the `404` §6.3 assumed. So §6.3 contradicted Q-iter2-5: it needed to read a sibling env (`pr-N`) the env-scoped token cannot reach. Confirmed live: every poll of `pr-4` logged `403 Forbidden` and the card stayed stuck on "Agent finished, building preview…" forever (the poll loop swallows `HTTPError` and keeps polling). Mapped the token's reach from inside the admin container with a proxy-minted token: list `/environments` → 403, GET own env `main` → 200, GET sibling `pr-4` → 403. The token can read its own env only. Resolution paths considered: (a) a project-scoped PAT in `UPSUN_API_TOKEN` (the existing `pat` path bypasses the proxy) — no PAT available, and it would put a long-lived secret in prod. (b) *Ruled out.* Deduce the URL from the env name — the middle hostname token is a per-environment hash, not the name (`main-bvxea6i` vs `pr-4-afnwgxy`), deterministic but undocumented, so not reproducible client-side. (c) **Chosen for v1.** Drop the preview URL: when the task completes successfully the run goes straight to `succeeded` with the PR link only. The GitHub integration's PR comment carries the preview URL until cross-env access lands in §7.3. This removes the `task_complete` state, `_poll_preview_env`, `_preview_env_id`, and `UpsunClient.get_environment`.
 - **Finding (informational).** The new task container is in **private beta** and requires a per-project support ticket to enable. Worth flagging in the playground README so anyone trying to reproduce this setup knows to request enablement first.

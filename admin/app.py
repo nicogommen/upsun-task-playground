@@ -4,9 +4,10 @@ Lifespan owns the shared httpx.AsyncClient and the UpsunClient so they're
 created once and closed cleanly on shutdown. Each request reaches the client
 via request.app.state.upsun.
 
-Status state machine in step 6a: triggering → running → task_complete | failed.
-The task_complete → succeeded transition (with preview_url) lands in step 6b
-once the agent prints the BRANCH= marker (step 7).
+Status state machine: triggering → running → succeeded | failed. The preview
+URL is not shown in v1 (Q-iter2-8): the admin's env-scoped token cannot read
+the sibling pr-<number> env, so a successful task goes straight to succeeded
+with the PR link. Surfacing the preview URL returns with cross-env access (§7.3).
 """
 
 from __future__ import annotations
@@ -38,8 +39,6 @@ PUBLIC_PATHS = frozenset({"/login", "/health"})
 # Machine-readable markers the coding-agent prints on stdout (ITERATION-2 §6.5).
 _PR_URL_RE = re.compile(r"PR_URL=(https?://\S+)")
 _BRANCH_RE = re.compile(r"^BRANCH=(\S+)$", re.MULTILINE)
-# A PR built by the GitHub integration deploys as env "pr-<number>" (Q-iter2-1).
-_PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
 
 
 @asynccontextmanager
@@ -105,13 +104,6 @@ def _extract_pr_url(activity_log: str) -> str | None:
 def _extract_branch(activity_log: str) -> str | None:
     m = _BRANCH_RE.search(activity_log)
     return m.group(1) if m else None
-
-
-def _preview_env_id(pr_url: str | None) -> str | None:
-    if not pr_url:
-        return None
-    m = _PR_NUMBER_RE.search(pr_url)
-    return f"pr-{m.group(1)}" if m else None
 
 
 def _render_card(request: Request, run: storage.Run) -> Response:
@@ -216,7 +208,7 @@ async def submit_run(
 
 
 async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:
-    """running → task_complete | failed, based on the trigger activity."""
+    """running → succeeded | failed, based on the trigger activity."""
     if not run.activity_id:
         return run
     try:
@@ -244,31 +236,9 @@ async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:
         log_text = ""
     return storage.update_run(
         run.id,
-        status="task_complete",
+        status="succeeded",
         pr_url=_extract_pr_url(log_text),
         branch_name=_extract_branch(log_text),
-    )
-
-
-async def _poll_preview_env(client: UpsunClient, run: storage.Run) -> storage.Run:
-    """task_complete → succeeded once the PR's preview env is active."""
-    env_id = _preview_env_id(run.pr_url)
-    if env_id is None:
-        # No PR (e.g. the agent made no changes): nothing to build. Done.
-        return storage.update_run(run.id, status="succeeded", completed_at=datetime.now(UTC))
-    try:
-        env = await client.get_environment(env_id)
-    except httpx.HTTPError:
-        logger.exception("get_environment %s failed for run %s", env_id, run.id)
-        return run
-    if env is None or env.get("status") != "active":
-        return run  # not built / still deploying — keep polling
-    public_url = (env.get("_links", {}).get("public-url") or {}).get("href")
-    return storage.update_run(
-        run.id,
-        status="succeeded",
-        preview_env_id=env_id,
-        preview_url=public_url,
         completed_at=datetime.now(UTC),
     )
 
@@ -284,6 +254,4 @@ async def poll_run(request: Request, run_id: str) -> Response:
     client: UpsunClient = request.app.state.upsun
     if run.status == "running":
         run = await _poll_activity(client, run)
-    if run.status == "task_complete":
-        run = await _poll_preview_env(client, run)
     return _render_card(request, run)
