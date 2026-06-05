@@ -27,6 +27,9 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from upsun_client import UpsunClient
 
+# uvicorn doesn't raise the app logger to INFO, so module-level logger.info is
+# dropped by default. Configure the root logger once so our logs actually surface.
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CODING_AGENT_TASK = "coding-agent"
@@ -196,7 +199,17 @@ async def submit_run(
         )
         return _render_card(request, run)
 
-    activity_id = body.get("id") or (body.get("activity") or {}).get("id")
+    # GIT-857 contract: 202 body is {"status": "created", "_embedded": {"activities": [{...}]}}.
+    activities = (body.get("_embedded") or {}).get("activities") or []
+    activity_id = activities[0].get("id") if activities else None
+    if not activity_id:
+        run = storage.update_run(
+            run.id,
+            status="failed",
+            error="trigger response missing activity id",
+            completed_at=datetime.now(UTC),
+        )
+        return _render_card(request, run)
     run = storage.update_run(
         run.id,
         status="running",
