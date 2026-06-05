@@ -17,6 +17,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -30,6 +31,28 @@ UPSUN_API_BASE = "https://api.upsun.com"
 AUTH_PROXY_URL = "http://localhost:8200/oauth2/token"
 TOKEN_TTL_SECONDS = 900
 TOKEN_REFRESH_LEEWAY = 5
+
+
+def _join_log_stream(body: str) -> str:
+    """Reassemble task stdout from the activity log's x-json-stream body.
+
+    Each line is {"_id": N, "data": {"timestamp", "message"}} except the final
+    {"_id": N, "seal": true} sentinel (Q-iter2-7). Messages already carry their
+    trailing newline, so they're concatenated as-is. Non-JSON lines are skipped.
+    """
+    parts: list[str] = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        data = obj.get("data")
+        if isinstance(data, dict) and isinstance(data.get("message"), str):
+            parts.append(data["message"])
+    return "".join(parts)
 
 
 @dataclass
@@ -103,34 +126,27 @@ class UpsunClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def list_environments(self) -> list[dict]:
-        path = f"/projects/{self._project_id}/environments"
-        resp = await self._request("GET", path)
+    async def get_activity_log(self, env_id: str, activity_id: str) -> str:
+        """Fetch the task's stdout (Q-iter2-7: no longer inline on the activity)."""
+        path = f"/projects/{self._project_id}/environments/{env_id}/activities/{activity_id}/log"
+        resp = await self._request(
+            "GET",
+            path,
+            params={"start_at": 0, "max_items": 0, "max_delay": -1},
+        )
         resp.raise_for_status()
-        body = resp.json()
-        # Upsun's HAL responses sometimes wrap the list under _embedded; both
-        # shapes are tolerated until we pin one down empirically (see §9).
-        if isinstance(body, list):
-            return body
-        return body.get("_embedded", {}).get("environments") or body.get("items", [])
+        return _join_log_stream(resp.text)
 
-    async def find_env_by_branch(self, branch: str, parent: str = "main") -> dict | None:
-        """Find a child env of `parent` whose source branch is `branch`.
+    async def get_environment(self, env_id: str) -> dict | None:
+        """Fetch one environment by id, or None if it doesn't exist yet.
 
-        Q-iter2-1: tries `name`, `title`, `head_ref` and logs which field
-        matched so we learn empirically on the first preview-env hit.
+        Q-iter2-1: the PR-built preview env is keyed `pr-<number>` (active),
+        not the branch name (the branch env is created inactive). The admin
+        derives `pr-<number>` from the PR URL and reads this env directly.
         """
-        envs = await self.list_environments()
-        for env in envs:
-            if env.get("parent") != parent:
-                continue
-            for field in ("name", "title", "head_ref"):
-                if env.get(field) == branch:
-                    logger.info(
-                        "preview env match: field=%s value=%r env_id=%r",
-                        field,
-                        branch,
-                        env.get("id") or env.get("name"),
-                    )
-                    return env
-        return None
+        path = f"/projects/{self._project_id}/environments/{env_id}"
+        resp = await self._request("GET", path)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()

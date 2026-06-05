@@ -1,5 +1,5 @@
 {# Run card partial. Standalone for HTMX swaps; included by chat.html for initial load. #}
-{% set terminal = run.status in ("succeeded", "failed", "task_complete") %}
+{% set terminal = run.status in ("succeeded", "failed") %}
 <article id="run-{{ run.id }}"
          class="bg-white rounded-xl border border-slate-200 shadow-sm p-4"
          {% if not terminal %}hx-get="/chat/runs/{{ run.id }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
@@ -21,8 +21,12 @@
         Agent is working…
       </span>
     {% elif run.status == "task_complete" %}
-      <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium">
-        Agent finished
+      <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">
+        <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
+          <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" class="opacity-75"></path>
+        </svg>
+        Agent finished, building preview…
       </span>
     {% elif run.status == "succeeded" %}
       <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium">

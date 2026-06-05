@@ -2,7 +2,7 @@
 
 **Purpose.** Replace the terminal-only trigger from Iteration 1 with a small, authenticated web UI: a user logs in, types a prompt, watches the resulting `coding-agent` run, and gets the PR + preview environment URL back when it finishes.
 
-**Status.** Pending. This document specifies the iteration in detail. Open questions are surfaced at the top.
+**Status.** In progress (2026-06-05). Steps 1-7 plus the step 6b preview-env transition are implemented and deployed to `main`. The full lifecycle (`triggering → running → task_complete → succeeded`) is wired. `running → task_complete` is confirmed live, and the `task_complete → succeeded` preview-env path is pending an end-to-end run with the step-7 markers. Findings logged in §9.
 
 **Companion docs.** [SPEC.md](./SPEC.md) is the iteration index and Iteration 1 contract. Nothing here replaces it; this doc extends the system, doesn't redefine it.
 
@@ -399,9 +399,12 @@ The agent in iter 1 was given prompts that referenced "the homepage." After the 
 
 ### 6.3 Preview environment polling
 
-- After the task is complete and we know the branch name, admin lists environments under the project (`GET /projects/.../environments`) and finds the one whose `parent == 'main'` and `name`/`title` matches the branch (the exact field that ties a PR-built env back to its source branch is a known unknown — see §9 Q-iter2-1; resolved empirically during build).
-- Once the matching env is found and its latest deploy activity is `state == "complete"` and `result == "success"`, fetch the env's public URL (`links.public-url`) and store as `preview_url`. Set `status='succeeded'`.
-- If the env's deploy fails, set `status='failed'` with the activity URL as `error`.
+Revised against Q-iter2-1 (the original branch-matching plan was wrong, see §9):
+
+- The PR built by the GitHub integration deploys as the environment `pr-<number>`, parent `main`. Admin parses the PR number from the agent's `PR_URL` marker (`/pull/(\d+)`) and reads that env directly via `GET /projects/.../environments/pr-<number>` (`get_environment`). No environment listing or branch matching.
+- A `404` means the env isn't built yet (keep polling). Once it exists and `env["status"] == "active"`, read `env["_links"]["public-url"]["href"]` into `preview_url` and set `status='succeeded'`.
+- If the run has no PR URL at all (e.g. the agent made no changes), there's no preview to wait for, so the run goes straight to `succeeded`.
+- Deploy-failure detection (a `pr-<number>` env that never reaches `active`) is not handled in v1. The run stays in `task_complete` and keeps polling, Acceptable for the single-tenant playground, revisit if it bites.
 
 ### 6.4 Status states & UI
 
@@ -505,9 +508,11 @@ The v1 data model already accommodates all three: `Run.target_environment` is a 
 
 To be filled in as we build, in the same shape as SPEC §7. Likely candidates:
 
-- **Q-iter2-1.** Exact field on the environment object that ties a PR-built env to its source branch (`title`? `name`? `head_ref`?). Needs an empirical lookup against a live preview env.
+- **Q-iter2-1.** *Resolved (2026-06-05), and it changes the §6.3 plan.* Branch matching is the wrong approach. When the GitHub integration (with `build_pull_requests`) processes a PR, it creates an **active** environment keyed `pr-<number>` (parent `main`, title "PR #N: ..."). The branch push separately creates an environment named after the branch (`coding-...`) that stays **inactive**. So matching the env by branch name finds the dead env, not the live preview. The reliable key is the PR number: parse it from the agent's `PR_URL` marker (`/pull/(\d+)`), the preview env id is `pr-<number>`, and the admin reads that env directly. The public URL is `env._links["public-url"]["href"]`, and readiness is `env["status"] == "active"`. This replaces `find_env_by_branch` (removed) with `get_environment(env_id)`.
 - **Q-iter2-2.** Whether single-worker is enforceable via Upsun config or only by how we invoke `uvicorn` in the start command. (Plain `uvicorn app:app` defaults to one worker, so this is mostly a doc question.)
 - **Q-iter2-3.** Whether project-level sensitive env vars set on `main` are visible to a preview env's `admin` app, or whether each preview env needs its own (likely the former — but worth confirming).
 - **Q-iter2-4.** *Resolved.* The auth proxy follows the OAuth2 standard response shape: `{"access_token", "expires_in", "token_type"}` with a 900s expiry. Documented in the [authentication doc](https://developer.upsun.com/api/rest/authentication.md) and confirmed for the proxy by the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations). `expires_in` is authoritative — trust it over the requested `x-token-ttl`.
 - **Q-iter2-5.** *Resolved against C3.* Auth-proxy tokens are env-scoped by design: "a token issued in one environment cannot act on another" ([authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 admin triggers in its own env (D3); cross-env triggering moves to §7.3.
+- **Q-iter2-6.** *Resolved (2026-06-05).* The trigger 202 body is `{"status": "created", "_embedded": {"activities": [{...}]}}` (GIT-857). The activity id is at `_embedded.activities[0].id`, not a top-level `id` or `activity.id`. The original parse guessed the latter, so `activity_id` was always `None` and polling never started (runs stuck on "running" forever). Fixed in step 6a, confirmed live.
+- **Q-iter2-7.** *Resolved (2026-06-05).* The task stdout is **no longer inline on the activity object**. `GET .../activities/{id}` returns metadata only: `state`, `result`, `text` (the human description, not stdout), and a deprecated `log` placeholder ("available in the streaming logs endpoint. Update your API client."). The real log is a separate call: `GET /projects/{project}/environments/{env}/activities/{id}/log?start_at=0&max_items=0&max_delay=-1` (the env-scoped and project-level paths both return 200). Response is `application/x-json-stream` (NDJSON): one `{"_id": N, "data": {"timestamp", "message"}}` per line, terminated by `{"_id": N, "seal": true}`. `max_delay=-1` returns immediately rather than long-polling. Consequence: PR/branch marker extraction needs this second call and must reassemble the `data.message` fields, then run the regexes. The old `_activity_log()` that read fields off the activity object could never have worked.
 - **Finding (informational).** The new task container is in **private beta** and requires a per-project support ticket to enable. Worth flagging in the playground README so anyone trying to reproduce this setup knows to request enablement first.
