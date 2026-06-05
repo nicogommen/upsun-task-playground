@@ -289,7 +289,10 @@ def main() -> int:
 
     pr_url = open_pr(branch, prompt, owner, name)
     if pr_url:
-        print(f"PR opened: {pr_url}", flush=True)
+        # Machine-readable markers parsed by the admin app from the activity log
+        # (ITERATION-2 §6.5). One per line, no trailing whitespace — this is a contract.
+        print(f"BRANCH={branch}", flush=True)
+        print(f"PR_URL={pr_url}", flush=True)
     else:
         print(
             "Branch is pushed but PR was not opened — open it manually if needed.",

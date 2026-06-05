@@ -35,10 +35,8 @@ logger = logging.getLogger(__name__)
 CODING_AGENT_TASK = "coding-agent"
 PUBLIC_PATHS = frozenset({"/login", "/health"})
 
-# Machine-readable PR marker (ITERATION-2 §6.5). The legacy "PR opened: <url>"
-# fallback is for runs triggered before step 7 lands; remove after step 7.
+# Machine-readable marker the coding-agent prints on stdout (ITERATION-2 §6.5).
 _PR_URL_RE = re.compile(r"PR_URL=(https?://\S+)")
-_PR_LEGACY_RE = re.compile(r"PR opened:\s*(https?://\S+)")
 
 
 @asynccontextmanager
@@ -113,7 +111,7 @@ def _activity_log(activity: dict) -> str | None:
 def _extract_pr_url(activity_log: str | None) -> str | None:
     if not activity_log:
         return None
-    m = _PR_URL_RE.search(activity_log) or _PR_LEGACY_RE.search(activity_log)
+    m = _PR_URL_RE.search(activity_log)
     return m.group(1) if m else None
 
 
