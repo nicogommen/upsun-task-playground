@@ -2,7 +2,7 @@
 
 **Purpose.** Replace the terminal-only trigger from Iteration 1 with a small, authenticated web UI: a user logs in, types a prompt, watches the resulting `coding-agent` run, and gets the PR + preview environment URL back when it finishes.
 
-**Status.** In progress (2026-06-05). Steps 1-7 plus the step 6b preview-env transition are implemented and deployed to `main`. The full lifecycle (`triggering → running → task_complete → succeeded`) is wired. `running → task_complete` is confirmed live, and the `task_complete → succeeded` preview-env path is pending an end-to-end run with the step-7 markers. Findings logged in §9.
+**Status.** In progress (2026-06-05). Steps 1-7 are implemented and deployed to `main`. The lifecycle (`triggering → running → succeeded | failed`) is wired and confirmed live end-to-end: a prompt triggers the task, the card polls to `succeeded`, and shows the PR link. The in-admin preview URL is dropped from v1 because the env-scoped token cannot read the sibling preview env (Q-iter2-8). It returns once a project-scoped authorization ships (§7.4). Findings logged in §9.
 
 **Companion docs.** [SPEC.md](./SPEC.md) is the iteration index and Iteration 1 contract. Nothing here replaces it; this doc extends the system, doesn't redefine it.
 
