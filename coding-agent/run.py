@@ -23,6 +23,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -256,8 +257,44 @@ def open_pr(branch: str, prompt: str, owner: str, name: str) -> str | None:
         return None
 
 
+def probe_sleep(sleep_s: int) -> int:
+    """Idle for `sleep_s` seconds so SSH/log access can be probed mid-run.
+
+    Emits heartbeats on stdout and stderr, and tries to write log files in
+    /var/log (where `upsun log` reads on app containers) and the /tmp mount,
+    reporting which destinations are writable. Skips the agent entirely:
+    no Anthropic call, no branch, no PR.
+    """
+    print(f"AGENT_SLEEP={sleep_s} — probe mode, idling (no agent run)", flush=True)
+
+    log_files = {}
+    for path in ("/var/log/probe.log", "/tmp/probe.log"):
+        try:
+            log_files[path] = open(path, "a", buffering=1)  # noqa: SIM115
+            print(f"log file writable: {path}", flush=True)
+        except OSError as e:
+            print(f"log file NOT writable: {path} ({e})", flush=True)
+
+    for elapsed in range(0, sleep_s, 10):
+        line = f"heartbeat t={elapsed}s pid={os.getpid()}"
+        print(f"stdout {line}", flush=True)
+        print(f"stderr {line}", file=sys.stderr, flush=True)
+        for path, fh in log_files.items():
+            fh.write(f"file {line} ({path})\n")
+        time.sleep(min(10, sleep_s - elapsed))
+
+    for fh in log_files.values():
+        fh.close()
+    print("probe sleep done, exiting", flush=True)
+    return 0
+
+
 def main() -> int:
     dump_env_for_probe()
+
+    sleep_s = int(os.environ.get("AGENT_SLEEP", "0") or 0)
+    if sleep_s:
+        return probe_sleep(sleep_s)
 
     prompt = resolve_prompt()
     if not prompt:
