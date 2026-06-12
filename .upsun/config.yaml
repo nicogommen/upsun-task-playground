@@ -25,7 +25,8 @@ applications:
     source:
       root: /admin
     type: "python:3.14"
-
+    container_profile: HIGHER_MEMORY
+    
     dependencies:
       python3:
         uv: "*"
