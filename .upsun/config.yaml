@@ -25,8 +25,7 @@ applications:
     source:
       root: /admin
     type: "python:3.14"
-    container_profile: HIGHER_MEMORY
-    
+
     dependencies:
       python3:
         uv: "*"
@@ -65,7 +64,6 @@ tasks:
     source:
       root: /coding-agent
     type: "python:3.14"
-    container_profile: HIGHER_MEMORY
 
     # Workaround: the task config validator rejects both `dependencies` and
     # `stack` (Unknown key), so the platform-native uv installs (the app's
