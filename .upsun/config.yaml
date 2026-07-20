@@ -81,12 +81,9 @@ tasks:
       command: ".venv/bin/python run.py"
       timeout: 900
 
-    # PCO-695 test: declare authorizations on the task so the local auth proxy
-    # (localhost:8200) should mint a token scoped to env/view. The AGENT_AUTH_PROBE
-    # mode in run.py checks whether the proxy is actually reachable from a task.
-    authorizations:
-      - type: env
-        action: view
+    # PCO-695 T4 (negative control): authorizations block temporarily removed to
+    # test whether the local auth proxy (localhost:8200) only starts when the
+    # task declares authorizations. Restore the env/view block after the test.
 
     mounts:
       "/tmp":
