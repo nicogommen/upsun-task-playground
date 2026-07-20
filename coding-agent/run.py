@@ -289,8 +289,128 @@ def probe_sleep(sleep_s: int) -> int:
     return 0
 
 
+def probe_auth() -> int:
+    """Probe the local auth proxy (localhost:8200) from inside the task.
+
+    PCO-695: determine whether a task container that declares `authorizations`
+    can reach the local auth proxy and mint a short-lived token. Mirrors the
+    exact contract the admin app uses (admin/upsun_client.py): form-encoded
+    grant_type=client_credentials POST with an x-token-ttl header.
+
+    Side-effect-free: no clone, no Anthropic call, no PR. Never logs the raw
+    token — only its claim subset and the API status it produces.
+    """
+    import base64
+    import socket
+    import urllib.parse
+
+    print("=" * 60, flush=True)
+    print("AGENT_AUTH_PROBE — local auth proxy (localhost:8200) probe", flush=True)
+    print("=" * 60, flush=True)
+
+    # 1. Listener check: is anything bound to :8200 inside this container?
+    diag_cmds = (
+        ["ss", "-tlnp"],
+        ["sh", "-c", "getent hosts localhost; echo ---; ip addr 2>/dev/null || true"],
+    )
+    for cmd in diag_cmds:
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            print(f"$ {' '.join(cmd)}\n{out.stdout}{out.stderr}", flush=True)
+        except Exception as e:  # diagnostics only, keep probing
+            print(f"listener check failed ({' '.join(cmd)}): {e}", flush=True)
+
+    # 2. Raw TCP connect to each host:port, then the real HTTP token request.
+    token = None
+    for host in ("127.0.0.1", "localhost"):
+        # 2a. Bare TCP connect — isolates ECONNREFUSED (the reported symptom)
+        # from any HTTP-layer issue.
+        try:
+            with socket.create_connection((host, 8200), timeout=5):
+                print(f"TCP connect {host}:8200 -> OK", flush=True)
+        except OSError as e:
+            print(f"TCP connect {host}:8200 -> {type(e).__name__}: {e}", flush=True)
+            continue
+
+        # 2b. HTTP token request, identical shape to admin/upsun_client.py.
+        url = f"http://{host}:8200/oauth2/token"
+        data = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "x-token-ttl": "900",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                print(f"POST {url} -> HTTP {resp.status}", flush=True)
+                try:
+                    parsed = json.loads(body)
+                except json.JSONDecodeError:
+                    print(f"  non-JSON body: {body[:300]}", flush=True)
+                    continue
+                if isinstance(parsed, dict) and "access_token" in parsed:
+                    token = parsed["access_token"]
+                    print(
+                        f"  token minted. response keys: {sorted(parsed.keys())}, "
+                        f"expires_in={parsed.get('expires_in')}",
+                        flush=True,
+                    )
+                else:
+                    print(f"  response body (no access_token): {body[:300]}", flush=True)
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8", errors="replace")
+            print(f"POST {url} -> HTTP {e.code}: {err[:300]}", flush=True)
+        except urllib.error.URLError as e:
+            print(f"POST {url} -> URLError: {e.reason}", flush=True)
+        except Exception as e:  # diagnostics only, keep probing
+            print(f"POST {url} -> {type(e).__name__}: {e}", flush=True)
+
+    if not token:
+        print("RESULT: no token minted — auth proxy not reachable from this task", flush=True)
+        return 0
+
+    # 3. Decode the token's claim subset (never print the token itself).
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        wanted = ("aud", "azp", "scope", "scp", "exp", "iss")
+        subset = {k: claims[k] for k in wanted if k in claims}
+        print(f"  token claims (subset): {subset}", flush=True)
+    except Exception as e:  # best-effort decode
+        print(f"  token decode skipped: {e}", flush=True)
+
+    # 4. End-to-end: use the token against the Upsun API with the env/view scope.
+    project = os.environ.get("PLATFORM_PROJECT", "")
+    branch = os.environ.get("PLATFORM_BRANCH", "")
+    if project and branch:
+        api_url = f"https://api.upsun.com/projects/{project}/environments/{branch}"
+        req = urllib.request.Request(api_url, headers={"Authorization": f"Bearer {token}"})
+        label = f"API GET /environments/{branch}"
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                print(f"{label} -> HTTP {resp.status} (token works)", flush=True)
+        except urllib.error.HTTPError as e:
+            print(f"{label} -> HTTP {e.code}: {e.read()[:200]!r}", flush=True)
+        except Exception as e:
+            print(f"{label} -> {type(e).__name__}: {e}", flush=True)
+    else:
+        print("  skipping API call — PLATFORM_PROJECT/PLATFORM_BRANCH not set", flush=True)
+
+    print("RESULT: token minted successfully — auth proxy IS reachable from this task", flush=True)
+    return 0
+
+
 def main() -> int:
     dump_env_for_probe()
+
+    if os.environ.get("AGENT_AUTH_PROBE", "").strip():
+        return probe_auth()
 
     sleep_s = int(os.environ.get("AGENT_SLEEP", "0") or 0)
     if sleep_s:
