@@ -81,9 +81,12 @@ tasks:
       command: ".venv/bin/python run.py"
       timeout: 900
 
-    # PCO-695 T4 (negative control): authorizations block temporarily removed to
-    # test whether the local auth proxy (localhost:8200) only starts when the
-    # task declares authorizations. Restore the env/view block after the test.
+    # PCO-695: declaring authorizations lets the local auth proxy (localhost:8200)
+    # mint an env/view-scoped token from inside the task. Confirmed reachable
+    # (see working/test-plan-pco-695-auth-proxy.md §10-11).
+    authorizations:
+      - type: env
+        action: view
 
     mounts:
       "/tmp":
