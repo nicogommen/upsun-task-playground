@@ -83,6 +83,9 @@ class Export:
 
 _RUN_FIELDS = frozenset(f.name for f in fields(Run))
 _EXPORT_FIELDS = frozenset(f.name for f in fields(Export))
+# An export in one of these states is finished, so it stops polling and stops
+# being rendered on page load. See active_export().
+_TERMINAL_EXPORT = frozenset({"succeeded", "failed"})
 _EXPORT_COLUMNS = ", ".join(f.name for f in fields(Export))
 
 # Columns selected for a Run, in dataclass order. Kept explicit rather than
@@ -169,9 +172,9 @@ class _MemoryBackend:
         with self._lock:
             return self._exports.get(export_id)
 
-    async def latest_export(self) -> Export | None:
+    async def active_export(self) -> Export | None:
         with self._lock:
-            exports = list(self._exports.values())
+            exports = [e for e in self._exports.values() if e.status not in _TERMINAL_EXPORT]
         return max(exports, key=lambda e: e.created_at) if exports else None
 
     async def update_export(self, export_id: str, **changes: object) -> Export:
@@ -315,9 +318,13 @@ class _PostgresBackend:
             f"SELECT {_EXPORT_COLUMNS} FROM exports WHERE id = $1", export_id
         )
 
-    async def latest_export(self) -> Export | None:
+    async def active_export(self) -> Export | None:
+        # Filtered in SQL rather than after the fetch so a finished export's
+        # payload (tens of KB) is never pulled just to be discarded.
         return await self._fetch_export(
-            f"SELECT {_EXPORT_COLUMNS} FROM exports ORDER BY created_at DESC LIMIT 1"
+            f"SELECT {_EXPORT_COLUMNS} FROM exports "
+            f"WHERE status <> ALL($1::text[]) ORDER BY created_at DESC LIMIT 1",
+            list(_TERMINAL_EXPORT),
         )
 
     async def update_export(self, export_id: str, **changes: object) -> Export:
@@ -410,9 +417,17 @@ async def get_export(export_id: str) -> Export | None:
     return await _backend.get_export(export_id)
 
 
-async def latest_export() -> Export | None:
-    """Most recent export, used to render the panel on page load."""
-    return await _backend.latest_export()
+async def active_export() -> Export | None:
+    """Most recent export that has NOT finished, used to render the panel on
+    page load.
+
+    Deliberately excludes terminal exports. A finished export is the result of
+    an action the user just took, not durable state, so a reload clears it
+    rather than leaving a stale "Export ready" and a download link to an old
+    file sitting there indefinitely. An export still in flight does survive a
+    reload, so refreshing mid-run does not orphan the poller.
+    """
+    return await _backend.active_export()
 
 
 async def update_export(export_id: str, **changes: object) -> Export:

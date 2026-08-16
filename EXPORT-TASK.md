@@ -205,3 +205,24 @@ Optionally, `upsun sql … "SELECT session_count, run_count FROM exports"` to sh
 - Capturing real agent output at run time. That is a genuine feature (`runs` would need a transcript column, and the agent would need to emit one), and it belongs in the product arc if it is ever wanted, not in a demo side-track.
 - Scheduling the export, filtering by date, or paginating. One button, everything, one file.
 - Any download authentication beyond the existing session gate.
+
+---
+
+## 11. The export result is transient
+
+`GET /chat` renders the panel from `storage.active_export()`, which returns
+only exports that have **not** finished. A completed export is the result of an
+action the user just took, not durable state, so a reload clears it. Otherwise
+"Export ready" and a download link to an increasingly old file sit in the
+sidebar forever, and a stale artifact presented as current is exactly the kind
+of thing someone downloads by mistake.
+
+An export still in flight *does* survive a reload, deliberately. Clearing those
+too would orphan the HTMX poller and the user would never see the run finish.
+
+Nothing is deleted. The row keeps its payload, `GET /exports/{id}` still
+renders it, and `GET /exports/{id}/download` still serves it. Only the
+page-load rendering drops it, so a link already in hand keeps working.
+
+The filter is applied in SQL rather than after the fetch, so a finished
+export's payload is never pulled from the database just to be thrown away.

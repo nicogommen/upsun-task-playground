@@ -178,7 +178,8 @@ async def chat(request: Request) -> Response:
     sid = _active_session_id(request)
     runs = await storage.list_runs(session_id=sid)
     sessions = await storage.list_sessions()
-    export = await storage.latest_export()
+    # Only an in-flight export renders on load; a finished one clears on reload.
+    export = await storage.active_export()
     return templates.TemplateResponse(
         request,
         "chat.html",
