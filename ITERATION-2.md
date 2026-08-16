@@ -26,7 +26,7 @@ A running record of resolved decisions. Listed once, never relitigated. Detail i
 | **D10** | N2 | Single-worker via uvicorn's default; no explicit `--workers` flag. | §4.6 |
 | **D11** | N3 | Tailwind via CDN, no JS toolchain. | §4.1, §4.4 |
 
-All open decisions resolved as of 2026-05-08. Empirical questions to answer during build live separately in §9.
+All open decisions resolved as of 2026-05-08, except D3, which was revised on 2026-06-05 once Q-iter2-5 established that auth-proxy tokens are env-scoped. Empirical questions answered during the build live separately in §9.
 
 ---
 
@@ -74,6 +74,9 @@ routes:
   "https://admin.{default}/":
     type: upstream
     upstream: "admin:http"
+  "https://www.{default}/":
+    type: redirect
+    to: "https://{default}/"
 ```
 
 - Production admin URL: `https://admin.<env>.<region>.platformsh.site`.
@@ -84,7 +87,7 @@ routes:
 - One admin user. Username defaults to `admin` and is overridable via `ADMIN_USERNAME`.
 - Password is provided as an **argon2 hash** in the `ADMIN_PASSWORD_HASH` sensitive env var.
 - A small CLI helper (`uv run --directory admin python -m passwordhash <password>`) prints a hash for the operator to paste into `upsun variable:create env:ADMIN_PASSWORD_HASH ...`.
-- Sessions ride on Starlette's `SessionMiddleware` (FastAPI's underlying framework), signed with `SECRET_KEY` (sensitive env var, ≥32 random bytes). Cookie attributes: `https_only=True`, `same_site="lax"`, `max_age=SESSION_LIFETIME_DAYS * 86400`.
+- Sessions ride on Starlette's `SessionMiddleware` (FastAPI's underlying framework), signed with `SECRET_KEY` (sensitive env var, ≥32 random bytes). Cookie attributes: `same_site="lax"`, `max_age=SESSION_LIFETIME_DAYS * 86400`, and `https_only` from `SESSION_COOKIE_SECURE` (defaults to true; set it to `false` for local dev over plain http).
 - A custom **HTTP middleware** redirects unauthenticated requests to `/login` for every path except `/login`, `/health`, and `/static/*`. Same outcome as Flask's `before_request`, expressed as `@app.middleware("http")` in FastAPI.
 
 ### 3.4 App→task trigger model
@@ -112,7 +115,7 @@ The admin app uses Upsun's per-container auth proxy and the platform's `authoriz
 3. Admin POSTs to `https://api.upsun.com/projects/$PLATFORM_PROJECT/environments/<target_env>/tasks/coding-agent/run` with `Authorization: Bearer <token>` and body `{"variables":{"env":{"AGENT_PROMPT":"..."}}}`.
 4. The 202 response carries the activity. Admin extracts `activity_id` and starts polling.
 
-Project id is read from `$PLATFORM_PROJECT` (a standard Upsun runtime var). The `<target_env>` is the env admin itself runs in (`$PLATFORM_BRANCH`) — auth-proxy tokens are scoped to their issuing env per the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations) ("a token issued in one environment cannot act on another"). Cross-env triggering (admin-on-preview → main, admin-on-main → preview, etc.) needs a different mechanism; we keep `target_environment` as a per-run field so the data model is open. See §7.3.
+Project id is read from `$PLATFORM_PROJECT` (a standard Upsun runtime var). The `<target_env>` is the env admin itself runs in (`$PLATFORM_BRANCH`) — auth-proxy tokens are scoped to their issuing env per the [authorizations doc](https://developer.upsun.com/docs/configure-apps/image-properties/authorizations) ("a token issued in one environment cannot act on another"). Cross-env triggering (admin-on-preview → main, admin-on-main → preview, etc.) needs a different mechanism; we keep `target_environment` as a per-run field so the data model is open. See §7.3.
 
 Polling lifecycle: see §6.
 
@@ -164,8 +167,9 @@ upsun-task-playground/
 │   ├── templates/
 │   │   ├── base.html
 │   │   ├── login.html
-│   │   └── chat.html
-│   ├── static/                   # empty in v1; reserved
+│   │   ├── chat.html
+│   │   └── _run_card.html        # run-card fragment, swapped in by HTMX
+│   ├── static/                   # favicon.svg + favicon-32.png
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── coding-agent/                 # unchanged
@@ -219,7 +223,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ["SECRET_KEY"],
     same_site="lax",
-    https_only=True,
+    https_only=os.environ.get("SESSION_COOKIE_SECURE", "true").lower() == "true",
     max_age=int(os.environ.get("SESSION_LIFETIME_DAYS", "7")) * 86400,
 )
 
@@ -271,7 +275,7 @@ applications:
         uv sync --frozen --no-dev
     web:
       commands:
-        start: ".venv/bin/gunicorn -b :$PORT app:app"
+        start: ".venv/bin/gunicorn -w 2 -b localhost:$PORT app:app"
       locations:
         "/":
           passthru: true
@@ -310,9 +314,12 @@ routes:
   "https://admin.{default}/":
     type: upstream
     upstream: "admin:http"
+  "https://www.{default}/":
+    type: redirect
+    to: "https://{default}/"
 ```
 
-The `coding-agent` task block stays as in iteration 1 (`source.root: /coding-agent`).
+The `coding-agent` task block keeps its iteration 1 shape (`source.root: /coding-agent`). It has since gained its own `authorizations: [{type: env, action: view}]` block (PCO-695), which is groundwork for the iteration 3 verification step rather than anything iteration 2 uses. See [SPEC.md §4.4](./SPEC.md).
 
 ### 4.7 Environment variables
 
@@ -321,7 +328,8 @@ The `coding-agent` task block stays as in iteration 1 (`source.root: /coding-age
 | `ADMIN_USERNAME` | env | no | Defaults to `admin`. |
 | `ADMIN_PASSWORD_HASH` | sensitive | yes | Argon2 hash. Generate with `uv run --directory admin python -m passwordhash <password>`. |
 | `SECRET_KEY` | sensitive | yes | ≥32 random bytes for Starlette `SessionMiddleware` cookie signing. `python -c 'import secrets; print(secrets.token_hex(32))'`. |
-| `SESSION_LIFETIME_DAYS` | env | no | Defaults to 7. |
+| `SESSION_LIFETIME_DAYS` | env | no | Defaults to 7. Set on the app in `.upsun/config.yaml`. |
+| `SESSION_COOKIE_SECURE` | env | no | Defaults to `true` (cookie is https-only). Set to `false` for local dev over plain http, otherwise the browser drops the session cookie and login appears to silently fail. Never set to `false` in production. |
 | `UPSUN_API_TOKEN` | sensitive | local dev only | Optional override: if set, `upsun_client.py` skips the auth proxy and uses this PAT directly. Lets `uv run python app.py` work outside Upsun. **Not set in production.** |
 
 **No project-id or target-env var is needed.** The runtime injects `PLATFORM_PROJECT` and `PLATFORM_BRANCH`; admin reads both directly. Target env defaults to `$PLATFORM_BRANCH` (the admin's own env, per D3). Bearer tokens are fetched from `http://localhost:8200/oauth2/token` (no env var either).
@@ -332,24 +340,26 @@ Per SPEC §7 Q6: project-level sensitive env vars don't reach a running containe
 
 The auth proxy at `localhost:8200` only exists inside Upsun containers. For local dev, set a user PAT in `UPSUN_API_TOKEN`; `upsun_client.py` detects it and skips the proxy.
 
+Run everything from the repo root and let `--directory` do the work. Do not `cd admin` first: combining that with `--directory admin` resolves to `admin/admin` and fails.
+
 ```bash
-cd admin
-uv sync
+uv sync --directory admin
 ADMIN_PASSWORD_HASH="$(uv run --directory admin python -m passwordhash 'devpass')" \
-SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" \
+SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+SESSION_COOKIE_SECURE=false                   \
 UPSUN_API_TOKEN="$UPSUN_API_TOKEN"            \
 PLATFORM_PROJECT="vdaznsr6gfmd2"              \
 PLATFORM_BRANCH="main"                        \
-uv run uvicorn app:app --host 0.0.0.0 --port 8001 --reload
+uv run --directory admin uvicorn app:app --port 8001 --reload
 ```
 
-Local mode binds to `:8001` so it doesn't collide with `frontend` on `:8000`. `--reload` picks up template + code changes; drop it for a closer-to-prod local run.
+Local mode binds to `:8001` so it doesn't collide with `frontend` on `:8000`. `SESSION_COOKIE_SECURE=false` is required locally: without it the cookie is https-only, the browser drops it, and login looks like it silently fails. `--reload` picks up template + code changes; drop it for a closer-to-prod local run. This block matches the README, which is the copy to keep in sync.
 
 ---
 
 ## 5. Repo restructure (`frontend/` folder)
 
-This is the iteration's one breaking change to existing files. Pending C2.
+This is the iteration's one breaking change to existing files. Resolved as D2; the move is done.
 
 ### 5.1 Moves
 
@@ -392,10 +402,10 @@ The agent in iter 1 was given prompts that referenced "the homepage." After the 
 
 - HTMX polls `/chat/runs/<id>` every 5s.
 - The route fetches the activity (`GET /projects/.../activities/<activity_id>`) and updates the `Run`:
-  - `state == "complete"` and `result == "success"` → `status='task_complete'`. Parse the activity log for `PR_URL=https://github.com/...` and `BRANCH=...` markers (we add those to the agent's stdout in §6.5).
+  - `state == "complete"` and `result == "success"` → `status='succeeded'`. Parse the activity log for `PR_URL=https://github.com/...` and `BRANCH=...` markers (we add those to the agent's stdout in §6.5). Note the log is a **separate** call, not a field on the activity object (Q-iter2-7).
   - `state == "complete"` and `result != "success"` → `status='failed'`, set `error`.
   - `state in {"pending", "in_progress"}` → unchanged.
-- Once `status` is `task_complete`, the same poll endpoint transitions to environment polling.
+- `succeeded` is terminal. The intermediate `task_complete` state this section originally described was removed with Q-iter2-8, along with the environment-polling step that followed it (§6.3).
 
 ### 6.3 Preview environment display (deferred to §7.3)
 
@@ -435,7 +445,9 @@ These aren't built in v1 but the v1 design must not block them.
 
 ### 7.1 Sessions & history (DB schema sketch)
 
-Even though v1 is in-memory, we design the data model now so the future move is a one-file swap:
+Even though v1 is in-memory, we design the data model now so the future move is a one-file swap.
+
+**This sketch is the target schema, not what ships today.** `admin/storage.py` currently omits `task_complete`, `preview_env_id`, and `preview_url`, all removed by Q-iter2-8. They are kept here deliberately because restoring the preview URL (§7.4) restores them too.
 
 ```python
 @dataclass
@@ -475,7 +487,7 @@ This is one of the main reasons we picked FastAPI in N4. No framework swap requi
 
 ### 7.3 Cross-env triggering (deferred)
 
-The auth-proxy issues env-scoped tokens by design ("a token issued in one environment cannot act on another", per the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 lives with that: each admin triggers in its own env.
+The auth-proxy issues env-scoped tokens by design ("a token issued in one environment cannot act on another", per the [authorizations doc](https://developer.upsun.com/docs/configure-apps/image-properties/authorizations)). v1 lives with that: each admin triggers in its own env.
 
 Use cases we'd like to keep open for later:
 
@@ -532,8 +544,8 @@ To be filled in as we build, in the same shape as SPEC §7. Likely candidates:
 - **Q-iter2-1.** *Resolved (2026-06-05), and it changes the §6.3 plan.* Branch matching is the wrong approach. When the GitHub integration (with `build_pull_requests`) processes a PR, it creates an **active** environment keyed `pr-<number>` (parent `main`, title "PR #N: ..."). The branch push separately creates an environment named after the branch (`coding-...`) that stays **inactive**. So matching the env by branch name finds the dead env, not the live preview. The reliable key is the PR number: parse it from the agent's `PR_URL` marker (`/pull/(\d+)`), the preview env id is `pr-<number>`, and the admin reads that env directly. The public URL is `env._links["public-url"]["href"]`, and readiness is `env["status"] == "active"`. This replaces `find_env_by_branch` (removed) with `get_environment(env_id)`.
 - **Q-iter2-2.** Whether single-worker is enforceable via Upsun config or only by how we invoke `uvicorn` in the start command. (Plain `uvicorn app:app` defaults to one worker, so this is mostly a doc question.)
 - **Q-iter2-3.** Whether project-level sensitive env vars set on `main` are visible to a preview env's `admin` app, or whether each preview env needs its own (likely the former — but worth confirming).
-- **Q-iter2-4.** *Resolved.* The auth proxy follows the OAuth2 standard response shape: `{"access_token", "expires_in", "token_type"}` with a 900s expiry. Documented in the [authentication doc](https://developer.upsun.com/api/rest/authentication.md) and confirmed for the proxy by the [authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations). `expires_in` is authoritative — trust it over the requested `x-token-ttl`.
-- **Q-iter2-5.** *Resolved against C3.* Auth-proxy tokens are env-scoped by design: "a token issued in one environment cannot act on another" ([authorizations doc](https://upsun-c9761871-492-new-task-container.mintlify.app/docs/configure-apps/image-properties/authorizations)). v1 admin triggers in its own env (D3); cross-env triggering moves to §7.3.
+- **Q-iter2-4.** *Resolved.* The auth proxy follows the OAuth2 standard response shape: `{"access_token", "expires_in", "token_type"}` with a 900s expiry. Documented in the [authentication doc](https://developer.upsun.com/api/rest/authentication.md) and confirmed for the proxy by the [authorizations doc](https://developer.upsun.com/docs/configure-apps/image-properties/authorizations). `expires_in` is authoritative — trust it over the requested `x-token-ttl`.
+- **Q-iter2-5.** *Resolved against C3.* Auth-proxy tokens are env-scoped by design: "a token issued in one environment cannot act on another" ([authorizations doc](https://developer.upsun.com/docs/configure-apps/image-properties/authorizations)). v1 admin triggers in its own env (D3); cross-env triggering moves to §7.3.
 - **Q-iter2-6.** *Resolved (2026-06-05).* The trigger 202 body is `{"status": "created", "_embedded": {"activities": [{...}]}}` (GIT-857). The activity id is at `_embedded.activities[0].id`, not a top-level `id` or `activity.id`. The original parse guessed the latter, so `activity_id` was always `None` and polling never started (runs stuck on "running" forever). Fixed in step 6a, confirmed live.
 - **Q-iter2-7.** *Resolved (2026-06-05).* The task stdout is **no longer inline on the activity object**. `GET .../activities/{id}` returns metadata only: `state`, `result`, `text` (the human description, not stdout), and a deprecated `log` placeholder ("available in the streaming logs endpoint. Update your API client."). The real log is a separate call: `GET /projects/{project}/environments/{env}/activities/{id}/log?start_at=0&max_items=0&max_delay=-1` (the env-scoped and project-level paths both return 200). Response is `application/x-json-stream` (NDJSON): one `{"_id": N, "data": {"timestamp", "message"}}` per line, terminated by `{"_id": N, "seal": true}`. `max_delay=-1` returns immediately rather than long-polling. Consequence: PR/branch marker extraction needs this second call and must reassemble the `data.message` fields, then run the regexes. The old `_activity_log()` that read fields off the activity object could never have worked.
 - **Q-iter2-8.** *Resolved (2026-06-05) — changes §6.3.* The preview-env read (`GET .../environments/pr-<number>`) is a **cross-environment** call, and the auth-proxy token is env-scoped (Q-iter2-5). From the admin running in `main` it returns **403 Forbidden**, not the `404` §6.3 assumed. So §6.3 contradicted Q-iter2-5: it needed to read a sibling env (`pr-N`) the env-scoped token cannot reach. Confirmed live: every poll of `pr-4` logged `403 Forbidden` and the card stayed stuck on "Agent finished, building preview…" forever (the poll loop swallows `HTTPError` and keeps polling). Mapped the token's reach from inside the admin container with a proxy-minted token: list `/environments` → 403, GET own env `main` → 200, GET sibling `pr-4` → 403. The token can read its own env only. Resolution paths considered: (a) a project-scoped PAT in `UPSUN_API_TOKEN` (the existing `pat` path bypasses the proxy) — no PAT available, and it would put a long-lived secret in prod. (b) *Ruled out.* Deduce the URL from the env name — the middle hostname token is a per-environment hash, not the name (`main-bvxea6i` vs `pr-4-afnwgxy`), deterministic but undocumented, so not reproducible client-side. (c) **Chosen for v1.** Drop the preview URL: when the task completes successfully the run goes straight to `succeeded` with the PR link only. The GitHub integration's PR comment carries the preview URL until cross-env access lands in §7.3. This removes the `task_complete` state, `_poll_preview_env`, `_preview_env_id`, and `UpsunClient.get_environment`. Verified live (2026-06-05): a fresh prompt ran `running → succeeded` and the card landed on "Done" with the PR link, no hang. To restore the preview URL once a project-scoped authorization exists, see §7.4 (a `type: project` authorization has been requested from engineering).

@@ -37,7 +37,9 @@ applications:
 
     # Scopes the bearer tokens the auth proxy at localhost:8200 will mint for
     # this app: task/operate to trigger and manage coding-agent runs, env/view
-    # for the activity poll + preview-env discovery in admin/upsun_client.py.
+    # to read the activity and its log while polling a run (admin/upsun_client.py).
+    # env/view covers this app's OWN environment only; the preview-env read it
+    # was also meant to serve is a cross-env call that 403s (ITERATION-2 Q-iter2-8).
     # Per ITERATION-2 §3.4 / §4.6 and the authorizations doc.
     authorizations:
       - type: task
@@ -82,8 +84,9 @@ tasks:
       timeout: 900
 
     # PCO-695: declaring authorizations lets the local auth proxy (localhost:8200)
-    # mint an env/view-scoped token from inside the task. Confirmed reachable
-    # (see working/test-plan-pco-695-auth-proxy.md §10-11).
+    # mint an env/view-scoped token from inside the task. Confirmed reachable.
+    # Nothing in the iteration 2 flow consumes it yet; it is groundwork for the
+    # iteration 3 verification step (SPEC §4.4, FUTURE-ITERATIONS iteration 3).
     authorizations:
       - type: env
         action: view

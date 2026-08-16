@@ -36,7 +36,7 @@
 
 **Pre-arranged by iter 2.**
 - Polling logic for activity + preview env ([ITERATION-2.md §6.2/§6.3](./ITERATION-2.md)) is already written for admin. Iter 3 needs the same logic *inside* the `coding-agent` task. Two options at iter-3 start: (a) extract a shared `upsun_client.py` lib used by both admin and the agent; (b) keep them separate and accept ~50 lines of duplication. Decision deferred, but admin's code should be clean enough that extraction is mechanical.
-- Auth-proxy flow (**D1**) works the same inside a task container. Iter 3 just adds `authorizations: [{type: env, action: view}]` to the `coding-agent` task block in `.upsun/config.yaml`.
+- Auth-proxy flow (**D1**) works the same inside a task container. **Already in place:** `authorizations: [{type: env, action: view}]` is declared on the `coding-agent` task block in `.upsun/config.yaml` (PCO-695), and the proxy was confirmed reachable from inside a running task. Iter 3 consumes that token rather than adding it.
 - Marker contract ([§6.5](./ITERATION-2.md): `BRANCH=`, `PR_URL=`) extends naturally — iter 3 adds `VERIFIED=true|false`.
 
 **Scope.**
@@ -68,9 +68,12 @@
 - `BRANCH=` / `PR_URL=` marker contract ([§6.5](./ITERATION-2.md)) lets a parent agent parse a child's outcome from the activity log without bespoke IPC.
 - Postgres-backed admin (iter 2.x) means dozens of runs from a parallel sweep don't get lost; the left-nav becomes load-bearing here.
 
+**Blocked on an unanswered question.** [SPEC.md §7 Q2](./SPEC.md) is still open: what happens when a second trigger fires while one is in flight? The docs mention a default cap of 3 parallel runs, but whether requests above the cap queue, reject, or block is unknown. This iteration is *about* parallelism, so Q2 is a prerequisite, not a footnote. It is cheap to answer before the iteration starts: the `AGENT_SLEEP` probe mode built for [TASK-MIDRUN-ACCESS.md](./TASK-MIDRUN-ACCESS.md) holds runs open with no side effects, so firing four concurrent sleeps and watching the activity list settles it.
+
 **Scope.**
 - New agent type — likely `lead-agent/` or `orchestrator-agent/` per the folder convention from SPEC §6.10.
 - Orchestrator declares `authorizations: [{type: task, resource: coding-agent, action: operate}]` and uses the same auth-proxy flow as admin.
+- Fan-out width has to respect whatever Q2 turns out to be. If the cap rejects rather than queues, the orchestrator needs its own queue.
 - **Open question**: how to merge multiple child PRs back into a single parent PR. Unclear at this distance — possibly a final "merge" step in the orchestrator.
 
 ---

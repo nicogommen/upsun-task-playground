@@ -2,7 +2,7 @@
 
 **Purpose.** Hands-on test bed for the new Upsun **task container** and for running AI agents inside it. Used to validate the outcomes defined in the [Run Background Agents on Upsun Cloud](https://linear.app/platformsh/project/run-background-agents-on-upsun-cloud-33a30afc5ff8) project brief.
 
-**Status.** Iteration 1 completed end-to-end on 2026-05-08 (PR auto-built into an active preview environment serving the agent's change). Living document — later iterations extend the spec.
+**Status.** Iteration 1 completed end-to-end on 2026-05-08 (PR auto-built into an active preview environment serving the agent's change). Iteration 2 (the admin UI) shipped its core lifecycle on 2026-06-05, with one item deferred: see [ITERATION-2.md](./ITERATION-2.md) for what landed and §7.4 there for what is parked. Living document — later iterations extend the spec.
 
 **Project on Upsun.** `upsun-task-playground` (`vdaznsr6gfmd2`), region `eu-3`, default branch `main`, connected to GitHub repo `nicogommen/upsun-task-playground` via the GitHub integration.
 
@@ -15,7 +15,7 @@ We grow the playground in small, demonstrable increments. This document specifie
 | # | Status | Title | Outcome |
 | - | ------ | ----- | ------- |
 | **1** | **Done (2026-05-08)** | **Visual Flask app + minimal coding-agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
-| **2** | **Pending — see [ITERATION-2.md](./ITERATION-2.md)** | **Admin UI for triggering the agent** | An authenticated admin web app lets a user submit prompts that trigger `coding-agent` (using `authorizations` + the per-container auth proxy, no user PAT) and surfaces the resulting PR + preview environment URL. |
+| **2** | **Done (2026-06-05) — see [ITERATION-2.md](./ITERATION-2.md)** | **Admin UI for triggering the agent** | An authenticated admin web app lets a user submit prompts that trigger `coding-agent` (using `authorizations` + the per-container auth proxy, no user PAT) and surfaces the resulting PR. The preview environment URL is **deferred**: the admin's env-scoped token cannot read the sibling preview env, so it returns once a project-scoped authorization ships (ITERATION-2 §7.4). |
 | 2.x | Pending | Persistent chat history (Postgres) | Move admin storage from in-memory to Postgres, persist sessions/runs across redeploys, enable the chat-history left-nav, drop the single-worker constraint. |
 | 3 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
 | 4 | Pending | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
@@ -76,7 +76,7 @@ The homepage exists so that prompts like "change the headline" or "add a feature
 
 Tailwind via CDN is deliberate: it avoids a Node toolchain in the repo and keeps the diff for an agent-driven change tiny and human-readable (one HTML file).
 
-### 3.3 File layout (after Iteration 2 step 2 — `admin/` scaffold)
+### 3.3 File layout (current, after Iteration 2)
 
 ```
 upsun-task-playground/
@@ -84,12 +84,25 @@ upsun-task-playground/
 │   ├── app.py              # Flask app, renders templates/index.html
 │   ├── pyproject.toml      # Flask + gunicorn (runtime deps for the frontend app)
 │   ├── uv.lock             # Resolved versions for the frontend app
+│   ├── static/
+│   │   ├── favicon.svg     # Upsun mark, prefers-color-scheme aware
+│   │   └── favicon-32.png  # Fallback for browsers without SVG favicon support
 │   └── templates/
 │       └── index.html      # Homepage (hero, features, footer)
 ├── admin/
-│   ├── app.py              # FastAPI app — currently exposes only /health
-│   ├── pyproject.toml      # FastAPI + uvicorn[standard]
-│   └── uv.lock             # Resolved versions for the admin app
+│   ├── app.py              # FastAPI app: routes, auth middleware, run lifecycle
+│   ├── auth.py             # argon2 password verification
+│   ├── storage.py          # In-memory Run store (Postgres-shaped, see ITERATION-2 §7.1)
+│   ├── upsun_client.py     # Async httpx wrapper: proxy token, trigger, activity log
+│   ├── passwordhash.py     # CLI helper printing an argon2 hash
+│   ├── pyproject.toml      # FastAPI + uvicorn[standard] + httpx + argon2-cffi
+│   ├── uv.lock             # Resolved versions for the admin app
+│   ├── static/             # favicon.svg + favicon-32.png (violet variant of the mark)
+│   └── templates/
+│       ├── base.html       # Shell: Tailwind, HTMX, top bar, favicons
+│       ├── login.html
+│       ├── chat.html
+│       └── _run_card.html  # Run-card fragment swapped in by HTMX
 ├── coding-agent/
 │   ├── run.py              # Task entry point — the agent loop
 │   ├── tools.py            # Tool definitions exposed to the LLM
@@ -109,7 +122,7 @@ upsun-task-playground/
 └── .gitignore
 ```
 
-`admin/` is a scaffold so far — only the FastAPI `/health` endpoint exists. Auth, templates, the chat UI, and the Upsun client land in iter 2 steps 3–8 (see [ITERATION-2.md §4.2](./ITERATION-2.md)).
+`admin/` is fully built as of iteration 2: login, session middleware, the chat UI, the run lifecycle, and the Upsun client are all in place and deployed (see [ITERATION-2.md §4](./ITERATION-2.md)).
 
 ### 3.4 Homepage content (Iteration 1 baseline)
 
@@ -121,15 +134,17 @@ The agent will modify this content; the baseline is intentionally generic so cha
 
 ### 3.5 Upsun config — `frontend`
 
-In `.upsun/config.yaml`. Python 3.14, uv-managed venv (`dependencies.python3.uv: "*"` bootstraps uv at build, `uv sync --frozen --no-dev` installs the locked deps), `.venv/bin/gunicorn` as the start command, single `/` route to upstream. `source.root: /frontend` since iter 2 step 1.
+In `.upsun/config.yaml`. Python 3.14, uv-managed venv (`dependencies.python3.uv: "*"` bootstraps uv at build, `uv sync --frozen --no-dev` installs the locked deps), `.venv/bin/gunicorn -w 2 -b localhost:$PORT` as the start command. `source.root: /frontend` since iter 2 step 1.
+
+Three routes are declared: `https://{default}/` to `frontend`, `https://admin.{default}/` to `admin` (iter 2, see [ITERATION-2.md §3.2](./ITERATION-2.md)), and `https://www.{default}/` as a redirect to the apex.
 
 ### 3.6 Tooling and CI
 
-The playground uses [uv](https://docs.astral.sh/uv/) end-to-end (build, runtime, local dev). Lint and format are enforced via [ruff](https://docs.astral.sh/ruff/) (Python) and [yamllint](https://yamllint.readthedocs.io/) (YAML) — both installed as dev deps in the **root** `pyproject.toml`. App-specific runtime deps live in each app's own `pyproject.toml` (`frontend/`, `coding-agent/`, and `admin/` once iter 2 step 2 lands).
+The playground uses [uv](https://docs.astral.sh/uv/) end-to-end (build, runtime, local dev). Lint and format are enforced via [ruff](https://docs.astral.sh/ruff/) (Python) and [yamllint](https://yamllint.readthedocs.io/) (YAML) — both installed as dev deps in the **root** `pyproject.toml`. App-specific runtime deps live in each app's own `pyproject.toml` (`frontend/`, `admin/`, `coding-agent/`).
 
 CI runs on every push and PR via `.github/workflows/ci.yml`:
 
-1. `uv sync --frozen` (root tooling + frontend + coding-agent)
+1. `uv sync --frozen` for each project in turn: root tooling, `frontend/`, `admin/`, `coding-agent/`
 2. `uv run ruff check .`
 3. `uv run ruff format --check .`
 4. `uv run yamllint .`
@@ -142,7 +157,7 @@ uv run ruff format .
 uv run yamllint .
 ```
 
-Lock files (`uv.lock`, `frontend/uv.lock`, `coding-agent/uv.lock`) are committed for reproducible builds. The Upsun build hooks use `--frozen` so a missing or outdated lock fails the build instead of silently resolving fresh.
+Lock files (`uv.lock`, `frontend/uv.lock`, `admin/uv.lock`, `coding-agent/uv.lock`) are committed for reproducible builds. The Upsun build hooks use `--frozen` so a missing or outdated lock fails the build instead of silently resolving fresh.
 
 ---
 
@@ -198,6 +213,12 @@ tasks:
     run:
       command: ".venv/bin/python run.py"
       timeout: 900
+    # Added after iteration 1 (PCO-695): lets the auth proxy at localhost:8200
+    # mint an env/view token from inside the task. Not used by the iteration 1
+    # flow; it is the groundwork for the iteration 3 verification step.
+    authorizations:
+      - type: env
+        action: view
     mounts:
       "/tmp":
         source: "tmp"
@@ -205,12 +226,12 @@ tasks:
 
 - `source.root: /coding-agent` keeps the task's code separate from the Flask app and from any future agent folders.
 - **uv install path differs from the flask app — and not by choice.** The task validator rejects both `dependencies` (the app's path) and `stack` (the composable image's path) with `Unknown key`, even with the task capability enabled. Astral's official installer is the only pip-free option that works today. The flask app stays on `dependencies.python3.uv: "*"`. See §7 Q5 — both gaps are real findings from this experiment, to be raised with the schema owners.
-- `uv sync --frozen` installs the locked deps from `agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
+- `uv sync --frozen` installs the locked deps from `coding-agent/uv.lock`. No `--no-dev` here because the task has no dev-only deps.
 - Ruff's `target-version` is intentionally pinned to `py313` even though both apps deploy on Python 3.14. The newer "unparenthesized except clauses" syntax is a 3.14-only feature; pinning ruff lower keeps the source portable and prevents `ruff format` from stripping parens that would then break a 3.13 fallback. Cheap insurance.
 - `timeout: 900` (15 min) is enough for an iteration-1 prompt; raise later if needed.
 - `tmp` mount gives the agent a workspace for cloning and editing.
 - No `relationships:` declared. Iteration 1 doesn't talk to any service.
-- No `triggers:` on the `flask` app. The trigger comes from a user-level token, not from the app.
+- No `triggers:` on the `frontend` app (named `flask` at the time of iteration 1). In iteration 1 the trigger comes from a user-level token. Iteration 2 replaced that with the `admin` app calling the trigger API under its own `authorizations`, still without a user PAT (see [ITERATION-2.md §3.4](./ITERATION-2.md)).
 
 ### 4.5 Agent runtime
 
@@ -249,7 +270,7 @@ urllib.request.Request(
 
 ### 4.6 Tool surface
 
-The LLM gets four tools, defined in `agent/tools.py`. Minimal by design — small surface area, easy to audit.
+The LLM gets four tools, defined in `coding-agent/tools.py`. Minimal by design — small surface area, easy to audit.
 
 | Tool | Purpose | Inputs |
 | ---- | ------- | ------ |
@@ -325,9 +346,9 @@ Iteration 2+ may add structured tracing (e.g. write a JSON log of each LLM turn)
 These shaped the spec above; documented so we can revisit them.
 
 1. **Tailwind via CDN, not a build step.** Avoids Node, keeps prompts → diffs → previews fast. We can swap to a real build later if we test Node-based agent prompts.
-2. **Trigger payload via `variables.env.<NAME>`.** Per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), entries under `variables.env` land as plain env vars in the task process — confirmed empirically (§7 Q1). The agent's `resolve_prompt()` keeps a small fallback ladder for portability, but in practice on Upsun the prompt arrives as `os.environ["AGENT_PROMPT"]`.
+2. **Trigger payload via `variables.env.<NAME>`.** Per [GIT-857](https://linear.app/platformsh/issue/GIT-857/add-task-trigger-api-endpoint), entries under `variables.env` land as plain env vars in the task process — confirmed empirically (§7 Q1). `resolve_prompt()` reads `os.environ["AGENT_PROMPT"]` directly. An earlier draft carried a fallback ladder for hypothetical alternative payload mechanisms; it was removed once Q1 resolved, because none of those paths ever fired (see §4.2).
 3. **Clone fresh over HTTPS, not push from the slug.** The task slug is not a git checkout; cloning fresh is the simplest way to get a full git tree to edit and push from.
-4. **GitHub PAT now, scoped credentials later.** A PAT in `GITHUB_TOKEN` is the simplest. `PLATFORM_TASK_TOKEN` (per the [App task trigger auth RFC](../../rfc-app-task-trigger-authentication.md)) is the right answer for Iteration 3, when the trigger comes from the app itself. Document but don't build it now.
+4. **GitHub PAT now, scoped credentials later.** A PAT in `GITHUB_TOKEN` is the simplest. `PLATFORM_TASK_TOKEN` (per the App task trigger authentication RFC, which lives outside this repo in the PM workspace) is the right answer for Iteration 3, when the trigger comes from the app itself. Document but don't build it now.
 5. **Four tools, not many.** `read_file`, `list_dir`, `write_file`, `run_bash`. Easy to reason about, easy to lock down later. `run_bash` is the escape hatch; we can remove it once we have richer tools.
 6. **Don't wait for the deploy.** Push and exit is the contract for Iteration 1. Adding "wait + curl + report" is a clean Iteration 2 because it's a strict superset.
 7. **Branch name encodes the agent type and the prompt.** `coding-<6 hex>-<slug>` (≤39 chars, no slashes, alphanumeric+dash). The prefix identifies which agent created the branch — useful when multiple agent types coexist. Random hex keeps each run unique; the slug keeps PR titles human-readable.
@@ -353,7 +374,7 @@ Real things we don't yet know — to be answered by Iteration 1 itself or by che
 
 ## 8. Glossary
 
-- **Task** — Upsun's new ephemeral, API-triggered, run-to-completion container type. See [terminology doc](../../terminology-agent-sandbox-task.md).
+- **Task** — Upsun's new ephemeral, API-triggered, run-to-completion container type. The agent/sandbox/task terminology doc lives outside this repo in the PM workspace.
 - **Agent** — software that uses an LLM in a loop with tools to achieve a goal. Lives inside the task container in this playground.
 - **Sandbox** — security-restriction pattern (firewall, bubblewrap, env filtering). Iteration 4+; not present in Iteration 1.
 - **Preview environment** — Upsun environment automatically created from a non-default branch via the GitHub integration.
