@@ -39,26 +39,27 @@
         {% endif %}
       {% endfor %}
     </nav>
-  </aside>
 
-  <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
-    <div class="flex items-start justify-between gap-4 mb-1">
-      <h1 class="text-2xl font-semibold">Run the coding agent</h1>
-      {# Second task container, no LLM involved. See EXPORT-TASK.md. #}
-      <form action="/exports" method="post" class="m-0 shrink-0"
+    {# Export lives in the sidebar footer, below the history it exports.
+       Second task container, no LLM involved. See EXPORT-TASK.md.
+       nav above is flex-1, so this pins to the bottom. #}
+    <div class="p-3 border-t border-slate-200 space-y-2">
+      <form action="/exports" method="post" class="m-0"
             hx-post="/exports" hx-target="#export-panel" hx-swap="outerHTML">
         <button type="submit"
-                class="px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
+                class="w-full px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
           Export sessions
         </button>
       </form>
-    </div>
-    <p class="text-sm text-slate-600 mb-2">
-      Type a prompt and submit. The agent edits the codebase, opens a PR, and Upsun builds a preview environment from it.
-    </p>
-    <div class="mb-6">
       {% include "_export_card.html" %}
     </div>
+  </aside>
+
+  <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
+    <h1 class="text-2xl font-semibold mb-1">Run the coding agent</h1>
+    <p class="text-sm text-slate-600 mb-6">
+      Type a prompt and submit. The agent edits the codebase, opens a PR, and Upsun builds a preview environment from it.
+    </p>
 
     <form action="/chat/runs" method="post"
           hx-post="/chat/runs" hx-target="#runs" hx-swap="afterbegin"

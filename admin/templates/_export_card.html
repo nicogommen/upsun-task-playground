@@ -1,25 +1,25 @@
-{# Export status panel. Standalone for HTMX swaps; included by chat.html on load.
-   Mirrors _run_card.html: polls while in flight, drops the trigger when terminal. #}
-<div id="export-panel"
+{# Export status, rendered in the sidebar footer. Standalone for HTMX swaps;
+   included by chat.html on load. Mirrors _run_card.html: polls while in
+   flight, drops the trigger when terminal.
+   Stacked rather than inline: the sidebar is w-64, which will not hold a row. #}
+<div id="export-panel" class="space-y-0.5"
      {% if export and export.status in ("triggering", "running") %}hx-get="/exports/{{ export.id }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
   {% if not export %}
     <p class="text-xs text-slate-400">No export yet.</p>
   {% elif export.status in ("triggering", "running") %}
-    <span class="inline-flex items-center gap-2 text-xs text-indigo-700">
-      <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+    <span class="flex items-center gap-2 text-xs text-indigo-700">
+      <svg class="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
         <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" class="opacity-75"></path>
       </svg>
-      Export task running…
+      Export running…
     </span>
   {% elif export.status == "succeeded" %}
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-      <span class="text-emerald-700 font-medium">Export ready</span>
-      <span class="text-slate-500">{{ export.session_count }} sessions · {{ export.run_count }} runs</span>
-      <a href="/exports/{{ export.id }}/download"
-         class="text-indigo-600 hover:underline font-medium">Download JSON ↓</a>
-    </div>
+    <p class="text-xs font-medium text-emerald-700">Export ready</p>
+    <p class="text-xs text-slate-500">{{ export.session_count }} sessions · {{ export.run_count }} runs</p>
+    <a href="/exports/{{ export.id }}/download"
+       class="block text-xs font-medium text-indigo-600 hover:underline">Download JSON ↓</a>
   {% elif export.status == "failed" %}
-    <p class="text-xs text-red-700 font-mono">{{ export.error or 'Export failed.' }}</p>
+    <p class="text-xs text-red-700 break-words">{{ export.error or 'Export failed.' }}</p>
   {% endif %}
 </div>
