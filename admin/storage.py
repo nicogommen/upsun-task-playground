@@ -43,6 +43,11 @@ class Session:
     id: str
     created_at: datetime
     title: str
+    # Populated by list_sessions for the history nav. A session is ordered by
+    # its most recent run, not by when it was created, so returning to an old
+    # chat and running something moves it back to the top.
+    last_run_at: datetime | None = None
+    run_count: int = 0
 
 
 @dataclass
@@ -92,6 +97,25 @@ class _MemoryBackend:
                 )
             elif not existing.title and title:
                 self._sessions[session_id] = replace(existing, title=title)
+
+    async def list_sessions(self, limit: int = 50) -> list[Session]:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            runs = list(self._runs.values())
+        by_session: dict[str, list[Run]] = {}
+        for run in runs:
+            by_session.setdefault(run.session_id, []).append(run)
+        summaries = [
+            replace(
+                s,
+                last_run_at=max(r.created_at for r in by_session[s.id]),
+                run_count=len(by_session[s.id]),
+            )
+            for s in sessions
+            if by_session.get(s.id)  # mirrors the SQL inner join: no runs, no nav entry
+        ]
+        summaries.sort(key=lambda s: s.last_run_at, reverse=True)
+        return summaries[:limit]
 
     async def save_run(self, run: Run) -> None:
         with self._lock:
@@ -165,6 +189,24 @@ class _PostgresBackend:
             created_at,
             title,
         )
+
+    async def list_sessions(self, limit: int = 50) -> list[Session]:
+        # INNER JOIN, not LEFT: a session with no runs is a page load that never
+        # became a chat, and must not show up in the history nav.
+        rows = await self._pool.fetch(
+            """
+            SELECT s.id, s.created_at, s.title,
+                   MAX(r.created_at) AS last_run_at,
+                   COUNT(r.id)       AS run_count
+            FROM sessions s
+            JOIN runs r ON r.session_id = s.id
+            GROUP BY s.id, s.created_at, s.title
+            ORDER BY last_run_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [Session(**dict(r)) for r in rows]
 
     async def save_run(self, run: Run) -> None:
         await self._pool.execute(
@@ -243,6 +285,11 @@ async def disconnect() -> None:
 
 async def ensure_session(session_id: str, created_at: datetime, title: str = "") -> None:
     await _backend.ensure_session(session_id, created_at, title)
+
+
+async def list_sessions(limit: int = 50) -> list[Session]:
+    """Sessions that have at least one run, most recently active first."""
+    return await _backend.list_sessions(limit)
 
 
 async def save_run(run: Run) -> None:

@@ -2,8 +2,44 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <div class="flex-1 flex">
-  {# Reserved for the future session list (iter 2.x). Hidden in v1. #}
-  <aside class="hidden lg:block lg:w-64 border-r border-slate-200 bg-white"></aside>
+  {# Chat history. Desktop only: the demo runs on a laptop and a slide-over
+     drawer is not worth the JS here. #}
+  {% set active_listed = sessions | selectattr('id', 'equalto', active_session_id) | list %}
+  <aside class="hidden lg:flex lg:flex-col lg:w-64 border-r border-slate-200 bg-white">
+    <div class="p-3 border-b border-slate-200">
+      <form action="/chat/sessions" method="post" class="m-0">
+        <button type="submit"
+                class="w-full px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
+          + New chat
+        </button>
+      </form>
+    </div>
+
+    <nav class="flex-1 overflow-y-auto p-2 space-y-1">
+      {# A brand-new chat has no runs yet, so it is not in the list. Show it as
+         the active entry so the highlight is never orphaned. #}
+      {% if not active_listed %}
+        <span class="block px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700">
+          <span class="block truncate text-sm font-medium">New chat</span>
+          <span class="block text-xs text-indigo-400">Not saved until you run a prompt</span>
+        </span>
+      {% endif %}
+
+      {% for s in sessions %}
+        <a href="/chat/sessions/{{ s.id }}"
+           class="block px-3 py-2 rounded-lg transition-colors {% if s.id == active_session_id %}bg-indigo-50 text-indigo-700{% else %}text-slate-700 hover:bg-slate-50{% endif %}">
+          <span class="block truncate text-sm font-medium">{{ s.title or 'Untitled chat' }}</span>
+          <span class="block text-xs {% if s.id == active_session_id %}text-indigo-400{% else %}text-slate-400{% endif %}">
+            {{ s.last_run_at.strftime('%b %d') }} · {{ s.run_count }} run{{ '' if s.run_count == 1 else 's' }}
+          </span>
+        </a>
+      {% else %}
+        {% if active_listed %}
+          <p class="px-3 py-2 text-xs text-slate-400">No chats yet.</p>
+        {% endif %}
+      {% endfor %}
+    </nav>
+  </aside>
 
   <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
     <h1 class="text-2xl font-semibold mb-1">Run the coding agent</h1>

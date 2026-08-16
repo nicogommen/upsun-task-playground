@@ -98,13 +98,21 @@ def _current_env() -> str:
     return os.environ.get("PLATFORM_BRANCH", "main")
 
 
-async def _ensure_session_id(request: Request, title: str = "") -> str:
-    """Session id lives in the signed cookie; the row exists so runs have a
-    foreign key to point at. Title is backfilled from the first prompt."""
+def _active_session_id(request: Request) -> str:
+    """The chat currently being viewed. Cookie-only: reading /chat must not
+    create a session row, or every idle page load would leave a titleless
+    entry in the history nav."""
     sid = request.session.get("chat_session_id")
     if not sid:
         sid = str(uuid.uuid4())
         request.session["chat_session_id"] = sid
+    return sid
+
+
+async def _ensure_session_id(request: Request, title: str = "") -> str:
+    """Called on the write path only. Persists the session so a run has a
+    foreign key to point at, and titles it from the first prompt."""
+    sid = _active_session_id(request)
     await storage.ensure_session(sid, datetime.now(UTC), title[:60])
     return sid
 
@@ -166,9 +174,30 @@ async def logout(request: Request) -> RedirectResponse:
 
 @app.get("/chat")
 async def chat(request: Request) -> Response:
-    sid = await _ensure_session_id(request)
+    sid = _active_session_id(request)
     runs = await storage.list_runs(session_id=sid)
-    return templates.TemplateResponse(request, "chat.html", {"runs": runs})
+    sessions = await storage.list_sessions()
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
+        {"runs": runs, "sessions": sessions, "active_session_id": sid},
+    )
+
+
+@app.post("/chat/sessions")
+async def new_session(request: Request) -> RedirectResponse:
+    """Start a fresh chat. The row is not written here: it appears in the
+    history nav once the first prompt is submitted."""
+    request.session["chat_session_id"] = str(uuid.uuid4())
+    return RedirectResponse(url="/chat", status_code=303)
+
+
+@app.get("/chat/sessions/{session_id}")
+async def switch_session(request: Request, session_id: str) -> RedirectResponse:
+    """Open a past chat. Single-user admin (ITERATION-2 §3.3), so every session
+    belongs to the one operator and no ownership check applies."""
+    request.session["chat_session_id"] = session_id
+    return RedirectResponse(url="/chat", status_code=303)
 
 
 @app.post("/chat/runs")

@@ -49,6 +49,7 @@ Same convention as [ITERATION-2.md](./ITERATION-2.md): open candidates are `C<n>
 | **D12** | C6 | Land straight on `main`, not via a branch. | §3.1 |
 | **D13** | C4 | **Persistence only.** Runs and sessions survive a redeploy; no visible UI change. The session left-nav stays out. | §2.2 |
 | **D14** | C5 | Keep an **in-memory fallback**. `storage` selects its backend at startup: Postgres when `POSTGRESQL_HOST` is set, in-memory otherwise. | §6.1 |
+| **D15** | — | **Supersedes D13.** The chat-history left-nav ships after all, as a follow-up inside this iteration, together with the session lifecycle it turned out to require. | §10 |
 
 ### 3.1 Note on D12
 
@@ -163,3 +164,36 @@ This is the main reason to be deliberate about C6. It is worth knowing the cost 
 
 - **Q-iter2x-1.** Does branching an environment copy the parent's Postgres data, or start empty? Upsun clones service data on branch for most services, which would mean a preview environment inherits `main`'s run history. Harmless here, possibly confusing in a demo. Confirm on the first preview environment.
 - **Q-iter2x-2.** Whether the `admin` container's 224 MB is comfortable with an asyncpg pool open. Expected to be fine at pool size 1 to 5, but worth watching the first deploy rather than assuming.
+
+---
+
+## 10. Chat-history left-nav (D15)
+
+Added after the persistence work landed. D13 had scoped it out; D15 supersedes that.
+
+### 10.1 Three problems the outline did not anticipate
+
+FUTURE-ITERATIONS described this as wiring a stubbed sidebar. Reading the code first turned up three reasons it is not:
+
+1. **There was no way to have more than one chat.** `_ensure_session_id` minted a single UUID into the signed cookie and reused it forever, with no action that could ever start a second one. A history nav over that model lists exactly one session, permanently. The actual work is a session lifecycle, not markup.
+2. **Empty sessions would have filled the nav.** `GET /chat` called `ensure_session`, so every idle page load wrote a titleless row. This was already visible in production before the fix: the deployed database held 1 session and 0 runs. Fixed on both sides. `GET /chat` now resolves the id from the cookie without writing (`_active_session_id`), and `list_sessions` inner-joins `runs` so a session with no runs cannot appear.
+3. **Run cards showed the time with no date** (`%H:%M:%S`). Correct while all history was same-day, misleading the moment it spans days, which is exactly what this feature introduces. Cards now render `%b %d · %H:%M:%S`.
+
+### 10.2 Shape
+
+- `GET /chat` renders the active session from the cookie, plus the session list.
+- `POST /chat/sessions` starts a new chat: a fresh id in the cookie, no row until the first prompt.
+- `GET /chat/sessions/{id}` switches the active chat. There is no ownership check because there is one admin user (ITERATION-2 §3.3), so every session belongs to the same operator.
+- `storage.list_sessions()` orders by **most recent run**, not by session creation, so returning to an old chat and running something moves it back to the top.
+- A brand-new chat is not in the list yet (no runs), so the nav renders it as a placeholder entry to keep the active highlight from being orphaned.
+
+The nav is desktop-only (`lg:`). A slide-over drawer for narrow screens was not worth the JS for a laptop demo.
+
+### 10.3 Seed data
+
+`admin/seed.sql` is demo fixture data: 5 sessions and 14 runs across three weeks, so the nav looks used instead of empty in a walkthrough. Points worth keeping straight:
+
+- **Nothing applies it automatically.** `storage.connect()` runs `schema.sql` only. Seeding is a deliberate manual step.
+- Every seeded id is prefixed `seed-`, which makes the undo surgical: real ids are UUIDs and cannot collide. `DELETE FROM sessions WHERE id LIKE 'seed-%'` removes the whole fixture, and runs cascade.
+- Timestamps are relative to `now()`, so the history stays plausible whenever it is applied rather than decaying into stale dates.
+- PR links point at real closed PRs in the repo, so clicking one in a demo opens a genuine agent PR instead of a 404.
