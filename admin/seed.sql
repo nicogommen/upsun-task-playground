@@ -25,7 +25,7 @@ BEGIN;
 DELETE FROM sessions WHERE id LIKE 'seed-%';
 
 INSERT INTO sessions (id, created_at, title) VALUES
-  ('seed-s1', now() - interval '22 days', 'Change the title to "COUCOU"'),
+  ('seed-s1', now() - interval '22 days', 'Make the hero subtitle clearer and shorter'),
   ('seed-s2', now() - interval '16 days', 'Add a cool gradient background for our hero.'),
   ('seed-s3', now() - interval '9 days',  'Add a new section on our homepage with an image'),
   ('seed-s4', now() - interval '4 days',  'Change the homepage headline to Hello from an agent'),
@@ -35,14 +35,14 @@ INSERT INTO runs
   (id, session_id, prompt, status, target_environment, created_at, completed_at,
    activity_id, branch_name, pr_url, error)
 VALUES
-  -- Session 1: first experiments, three weeks ago.
-  ('seed-r01', 'seed-s1', 'Change the title to "COUCOU"',
+  -- Session 1: an early copy tidy-up, three weeks ago.
+  ('seed-r01', 'seed-s1', 'Make the hero subtitle clearer and shorter',
    'succeeded', 'main', now() - interval '22 days', now() - interval '22 days' + interval '3 min',
-   'seedact01', 'coding-6a1f2c-change-the-title-to-coucou',
+   'seedact01', 'coding-6a1f2c-make-the-hero-subtitle-cl',
    'https://github.com/nicogommen/upsun-task-playground/pull/6', NULL),
-  ('seed-r02', 'seed-s1', 'Make the title uppercase and bold',
+  ('seed-r02', 'seed-s1', 'Also shorten the three feature card descriptions to one line each',
    'succeeded', 'main', now() - interval '22 days' + interval '11 min', now() - interval '22 days' + interval '14 min',
-   'seedact02', 'coding-9c4d1a-make-the-title-uppercase',
+   'seedact02', 'coding-9c4d1a-also-shorten-the-three-fe',
    'https://github.com/nicogommen/upsun-task-playground/pull/7', NULL),
 
   -- Session 2: styling pass.
