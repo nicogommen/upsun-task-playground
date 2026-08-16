@@ -253,7 +253,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
 
 - `auth.py` exposes `verify_password(plain) -> bool` (reads `ADMIN_PASSWORD_HASH`, calls `argon2.PasswordHasher().verify`; returns False on `VerifyMismatchError`).
 - Cookie attributes set on `SessionMiddleware` map directly to the Flask names from earlier: `same_site="lax"` ↔ `SAMESITE`, `https_only=True` ↔ `SECURE`. `HttpOnly` is the Starlette default.
-- Login is rate-limited with a simple in-memory counter (e.g. 10 failed attempts per IP per 10 minutes → 429). Trivial; documented as not durable across restarts. Good enough for a single-tenant admin in v1.
+- **Not built.** This section originally specified a simple in-memory rate limiter (10 failed attempts per IP per 10 minutes → 429). It was never implemented, and the login path today accepts unlimited attempts. Tracked in §10; the only thing slowing an attacker down is argon2's own cost per verify.
 - Lifetime defaults to 7 days (`SESSION_LIFETIME_DAYS`).
 
 ### 4.6 Upsun config
@@ -557,6 +557,7 @@ To be filled in as we build, in the same shape as SPEC §7. Likely candidates:
 
 State at 2026-06-05: the core lifecycle is shipped and verified live. The blocked item (preview URL in the admin) is parked in §7.4 pending a `type: project` authorization. Everything below is unblocked and can proceed without the platform change.
 
+- **Login rate limiting.** §4.5 specified an in-memory per-IP limiter (10 failed attempts per 10 minutes → 429) that was never built, so `POST /login` accepts unlimited attempts. The admin is publicly reachable at `https://admin.<env>.<region>.platformsh.site`, and argon2's per-verify cost is the only brake. Low exploitability for a single-user playground behind a strong password, but it is the one place where the spec described a control that does not exist. Roughly 30 lines when picked up: a dict of `ip -> (count, window_start)` checked before `verify_password`, cleared on success. Not durable across restarts, which is acceptable at this size.
 - **Unit tests.** No project tests exist yet. Good first targets are the pure helpers: `_extract_pr_url` and `_extract_branch` (`admin/app.py`), `_join_log_stream` (`admin/upsun_client.py`), and the `_poll_activity` transitions with a stubbed `UpsunClient`. Would mean adding `pytest` plus a CI step alongside the existing `ruff` / `yamllint`.
 - **Failed-run UX.** §6.4 lists a "retry button" for `failed`, but `_run_card.html` only renders the error text. Either build retry (re-submit the same prompt) or align §6.4 to what shipped.
 - **Chat copy nit.** The `/chat` intro still says "Upsun builds a preview environment from it." Still true, but we no longer surface the URL, so consider softening to avoid over-promising.
