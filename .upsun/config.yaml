@@ -48,6 +48,13 @@ applications:
       - type: env
         action: view
 
+    # Persistent run history (ITERATION-2.x). Short form: the relationship name
+    # resolves to the service of the same name on its default endpoint. Upsun
+    # injects POSTGRESQL_HOST/_PORT/_USERNAME/_PASSWORD/_PATH, which is what
+    # admin/storage.py reads. Only admin talks to the database.
+    relationships:
+      postgresql:
+
     variables:
       env:
         SESSION_LIFETIME_DAYS: "7"
@@ -94,6 +101,15 @@ tasks:
     mounts:
       "/tmp":
         source: "tmp"
+
+services:
+  # 18 is the newest version Upsun supports (meta.upsun.com/images). Greenfield
+  # database with nothing to migrate, so there is no reason to start behind.
+  # Disk is allocated per environment: upsun resources:set --service postgresql.
+  # Note every environment gets its own instance, preview envs included
+  # (ITERATION-2.x §7).
+  postgresql:
+    type: "postgresql:18"
 
 routes:
   "https://{default}/":

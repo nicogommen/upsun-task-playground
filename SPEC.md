@@ -16,7 +16,7 @@ We grow the playground in small, demonstrable increments. This document specifie
 | - | ------ | ----- | ------- |
 | **1** | **Done (2026-05-08)** | **Visual Flask app + minimal coding-agent task** | Agent receives a prompt, makes the change, opens a PR, Upsun builds an active preview environment from the PR. |
 | **2** | **Done (2026-06-05) — see [ITERATION-2.md](./ITERATION-2.md)** | **Admin UI for triggering the agent** | An authenticated admin web app lets a user submit prompts that trigger `coding-agent` (using `authorizations` + the per-container auth proxy, no user PAT) and surfaces the resulting PR. The preview environment URL is **deferred**: the admin's env-scoped token cannot read the sibling preview env, so it returns once a project-scoped authorization ships (ITERATION-2 §7.4). |
-| 2.x | Pending | Persistent chat history (Postgres) | Move admin storage from in-memory to Postgres, persist sessions/runs across redeploys, enable the chat-history left-nav, drop the single-worker constraint. |
+| 2.x | **In progress (2026-08-16) — see [ITERATION-2.x.md](./ITERATION-2.x.md)** | Persistent chat history (Postgres) | Move admin storage from in-memory to Postgres so sessions and runs survive a redeploy. The chat-history left-nav is **out of scope** (D13) and the single-worker constraint is released but not exercised (D10, see ITERATION-2.x §4). |
 | 3 | Pending | Verification step | Agent waits for the preview deploy and curls a URL to confirm the change is live. |
 | 4 | Pending | Sandbox restrictions | Outbound firewall + bubblewrap layered onto the task container. |
 | 5 | Pending | Sub-agents and parallelism | One agent task launches and orchestrates others. |
@@ -92,7 +92,8 @@ upsun-task-playground/
 ├── admin/
 │   ├── app.py              # FastAPI app: routes, auth middleware, run lifecycle
 │   ├── auth.py             # argon2 password verification
-│   ├── storage.py          # In-memory Run store (Postgres-shaped, see ITERATION-2 §7.1)
+│   ├── storage.py          # Run store: Postgres, or in-memory when unconfigured (ITERATION-2.x)
+│   ├── schema.sql          # DDL applied at startup by storage.connect()
 │   ├── upsun_client.py     # Async httpx wrapper: proxy token, trigger, activity log
 │   ├── passwordhash.py     # CLI helper printing an argon2 hash
 │   ├── pyproject.toml      # FastAPI + uvicorn[standard] + httpx + argon2-cffi

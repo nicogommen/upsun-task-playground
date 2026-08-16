@@ -10,23 +10,9 @@
 
 ## Iteration 2.x — Persistent chat history (Postgres)
 
-**Driver.** Per **D7**, v1 admin stores runs in an in-memory dict, lost on every redeploy. The committed future storage is **Postgres** (not SQLite). This is substantial work — DB service, relationships block, schema, async driver, worker reconfig — so it gets its own iteration row instead of hiding inside iter 2.
+**Started 2026-08-16. See [ITERATION-2.x.md](./ITERATION-2.x.md)** for the built plan, verified platform facts, and decisions D12 to D14.
 
-**Pre-arranged by iter 2.**
-- Schema sketch ready in [ITERATION-2.md §7.1](./ITERATION-2.md) (`Session`, `Run` dataclasses).
-- `admin/storage.py` interface keeps call sites stable across the swap.
-- Left-nav placeholder already in `chat.html` so wiring up "previous sessions" is a template change, not a layout one.
-
-**Scope.**
-- Add a Postgres service to `.upsun/config.yaml` (`services: db: { type: postgresql:16 }` — exact version pinned at iter start).
-- Add `relationships: { db: "db:postgresql" }` on the `admin` app.
-- Add `asyncpg` (admin is async — D4) to admin's deps.
-- Reimplement `admin/storage.py` against Postgres; keep the public interface unchanged.
-- Migrations: single `schema.sql` applied at startup is enough until the schema gets richer; switch to alembic if/when needed.
-- Drop the single-worker constraint (**D10** released): persistent storage frees us to scale uvicorn workers (`gunicorn -k uvicorn.workers.UvicornWorker -w N`, per ITERATION-2.md §4.1 footnote).
-- Wire the left-nav: `list_runs(session_id=None)` grouped by session, rendered as the previously-stubbed sidebar.
-
-**Out of scope.** User accounts (still single hardcoded admin), log retention beyond the Upsun activity log.
+Two things this outline got wrong, corrected in that doc: the route layer *does* change (storage becomes async, so 8 call sites take `await`), and the left-nav is not a template change because sessions were never persisted at all. The left-nav is out of scope for the iteration as scoped (D13), and the single-worker constraint is released but deliberately not exercised on a 224 MB container.
 
 ---
 

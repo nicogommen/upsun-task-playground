@@ -51,9 +51,14 @@ async def lifespan(app: FastAPI):
         logger.warning("PLATFORM_PROJECT not set — task trigger will fail until provided")
     app.state.upsun = UpsunClient(http, project_id=project_id, pat=pat)
     app.state.http = http
+    # Opens the store and applies schema.sql. Raises if a database is configured
+    # but unreachable, which is deliberate: see the storage module docstring.
+    await storage.connect()
+    logger.info("storage backend: %s", storage.backend_name())
     try:
         yield
     finally:
+        await storage.disconnect()
         await http.aclose()
 
 
@@ -93,11 +98,14 @@ def _current_env() -> str:
     return os.environ.get("PLATFORM_BRANCH", "main")
 
 
-def _ensure_session_id(request: Request) -> str:
+async def _ensure_session_id(request: Request, title: str = "") -> str:
+    """Session id lives in the signed cookie; the row exists so runs have a
+    foreign key to point at. Title is backfilled from the first prompt."""
     sid = request.session.get("chat_session_id")
     if not sid:
         sid = str(uuid.uuid4())
         request.session["chat_session_id"] = sid
+    await storage.ensure_session(sid, datetime.now(UTC), title[:60])
     return sid
 
 
@@ -158,8 +166,8 @@ async def logout(request: Request) -> RedirectResponse:
 
 @app.get("/chat")
 async def chat(request: Request) -> Response:
-    sid = _ensure_session_id(request)
-    runs = storage.list_runs(session_id=sid)
+    sid = await _ensure_session_id(request)
+    runs = await storage.list_runs(session_id=sid)
     return templates.TemplateResponse(request, "chat.html", {"runs": runs})
 
 
@@ -168,7 +176,7 @@ async def submit_run(
     request: Request,
     prompt: str = Form(...),
 ) -> Response:
-    sid = _ensure_session_id(request)
+    sid = await _ensure_session_id(request, title=prompt)
     target = _current_env()
     run = storage.Run(
         id=str(uuid.uuid4()),
@@ -178,14 +186,14 @@ async def submit_run(
         target_environment=target,
         created_at=datetime.now(UTC),
     )
-    storage.save_run(run)
+    await storage.save_run(run)
 
     client: UpsunClient = request.app.state.upsun
     try:
         body = await client.trigger_task(target, CODING_AGENT_TASK, {"AGENT_PROMPT": prompt})
     except (httpx.HTTPError, KeyError) as exc:
         logger.exception("trigger_task failed for run %s", run.id)
-        run = storage.update_run(
+        run = await storage.update_run(
             run.id,
             status="failed",
             error=str(exc),
@@ -197,14 +205,14 @@ async def submit_run(
     activities = (body.get("_embedded") or {}).get("activities") or []
     activity_id = activities[0].get("id") if activities else None
     if not activity_id:
-        run = storage.update_run(
+        run = await storage.update_run(
             run.id,
             status="failed",
             error="trigger response missing activity id",
             completed_at=datetime.now(UTC),
         )
         return _render_card(request, run)
-    run = storage.update_run(
+    run = await storage.update_run(
         run.id,
         status="running",
         activity_id=activity_id,
@@ -226,7 +234,7 @@ async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:
 
     result = activity.get("result")
     if result != "success":
-        return storage.update_run(
+        return await storage.update_run(
             run.id,
             status="failed",
             error=f"task {result or 'failed'}",
@@ -239,7 +247,7 @@ async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:
     except httpx.HTTPError:
         logger.exception("get_activity_log failed for run %s", run.id)
         log_text = ""
-    return storage.update_run(
+    return await storage.update_run(
         run.id,
         status="succeeded",
         pr_url=_extract_pr_url(log_text),
@@ -250,7 +258,7 @@ async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:
 
 @app.get("/chat/runs/{run_id}")
 async def poll_run(request: Request, run_id: str) -> Response:
-    run = storage.get_run(run_id)
+    run = await storage.get_run(run_id)
     if run is None:
         return Response(status_code=404)
     if run.status in ("succeeded", "failed"):

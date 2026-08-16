@@ -33,6 +33,8 @@ uv sync                                       # installs ruff + yamllint
 
 The `admin` app needs a few environment variables. Locally it skips the in-container OAuth2 proxy and talks to the Upsun API with a user PAT in `UPSUN_API_TOKEN`. Set `SESSION_COOKIE_SECURE=false` so the session cookie is accepted over plain http.
 
+No database is needed locally: with `POSTGRESQL_HOST` unset, run storage falls back to an in-memory dict (D14). Set the `POSTGRESQL_*` variables to point at a real Postgres if you want to exercise the deployed code path.
+
 ```bash
 # Admin (FastAPI trigger UI)
 uv sync --directory admin
@@ -73,7 +75,9 @@ CI runs the same set on every push and PR. See `.github/workflows/ci.yml`.
 
 ## Deploy
 
-Commits to `main` push to GitHub. Upsun mirrors via the connected integration and runs the build defined in `.upsun/config.yaml` (Python 3.14, uv-managed venv). Both `frontend` (gunicorn) and `admin` (uvicorn) redeploy. Admin run history is in-memory in v1, so a redeploy clears it (the Postgres swap is deferred, see ITERATION-2 §7.1).
+Commits to `main` push to GitHub. Upsun mirrors via the connected integration and runs the build defined in `.upsun/config.yaml` (Python 3.14, uv-managed venv). Both `frontend` (gunicorn) and `admin` (uvicorn) redeploy. Admin run history is stored in the `postgresql` service and survives redeploys (see [ITERATION-2.x.md](./ITERATION-2.x.md)).
+
+Note that services on Upsun are per-environment, so every preview environment runs its own Postgres alongside the two apps.
 
 ## Coding-agent task
 
