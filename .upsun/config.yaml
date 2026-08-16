@@ -45,6 +45,9 @@ applications:
       - type: task
         resource: coding-agent
         action: operate
+      - type: task
+        resource: export-job
+        action: operate
       - type: env
         action: view
 
@@ -101,6 +104,33 @@ tasks:
     mounts:
       "/tmp":
         source: "tmp"
+
+  # Deliberately not an agent, and named to say so (EXPORT-TASK.md). No LLM
+  # runs here: it reads the database and writes JSON. The point is that the
+  # same task primitive serves a plain data job.
+  export-job:
+    source:
+      root: /export-job
+    type: "python:3.14"
+
+    # Same uv-installer workaround as coding-agent: `dependencies` and `stack`
+    # are still rejected on tasks (SPEC §7 Q5).
+    hooks:
+      build: |
+        set -eux
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
+        uv sync --frozen
+
+    run:
+      command: ".venv/bin/python run.py"
+      timeout: 300
+
+    # A task may relate to services and apps, but nothing may relate back to a
+    # task: it only exists while it runs. So the job writes its result into the
+    # database itself rather than handing it to the admin (D16).
+    relationships:
+      postgresql:
 
 services:
   # 18 is the newest version Upsun supports (meta.upsun.com/images). Greenfield

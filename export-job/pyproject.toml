@@ -1,0 +1,8 @@
+[project]
+name = "upsun-task-playground-export-job"
+version = "0.1.0"
+description = "Export task — dumps sessions and runs to JSON. Deliberately not an agent, see EXPORT-TASK.md."
+requires-python = ">=3.14"
+dependencies = [
+    "asyncpg>=0.31",
+]

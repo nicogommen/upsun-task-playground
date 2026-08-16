@@ -65,7 +65,25 @@ class Run:
     completed_at: datetime | None = None
 
 
+@dataclass
+class Export:
+    """An export-job run. The admin creates the row and the task fills it in
+    from its own connection to the same database (EXPORT-TASK.md D16)."""
+
+    id: str
+    status: str
+    created_at: datetime
+    activity_id: str | None = None
+    completed_at: datetime | None = None
+    session_count: int | None = None
+    run_count: int | None = None
+    payload: str | None = None
+    error: str | None = None
+
+
 _RUN_FIELDS = frozenset(f.name for f in fields(Run))
+_EXPORT_FIELDS = frozenset(f.name for f in fields(Export))
+_EXPORT_COLUMNS = ", ".join(f.name for f in fields(Export))
 
 # Columns selected for a Run, in dataclass order. Kept explicit rather than
 # SELECT * because the table carries two columns (preview_env_id, preview_url)
@@ -81,6 +99,7 @@ class _MemoryBackend:
         self._lock = Lock()
         self._runs: dict[str, Run] = {}
         self._sessions: dict[str, Session] = {}
+        self._exports: dict[str, Export] = {}
 
     async def connect(self) -> None:
         return None
@@ -140,6 +159,28 @@ class _MemoryBackend:
                 raise KeyError(run_id)
             updated = replace(existing, **changes)
             self._runs[run_id] = updated
+            return updated
+
+    async def save_export(self, export: Export) -> None:
+        with self._lock:
+            self._exports[export.id] = export
+
+    async def get_export(self, export_id: str) -> Export | None:
+        with self._lock:
+            return self._exports.get(export_id)
+
+    async def latest_export(self) -> Export | None:
+        with self._lock:
+            exports = list(self._exports.values())
+        return max(exports, key=lambda e: e.created_at) if exports else None
+
+    async def update_export(self, export_id: str, **changes: object) -> Export:
+        with self._lock:
+            existing = self._exports.get(export_id)
+            if existing is None:
+                raise KeyError(export_id)
+            updated = replace(existing, **changes)
+            self._exports[export_id] = updated
             return updated
 
 
@@ -249,6 +290,51 @@ class _PostgresBackend:
             )
         return [Run(**dict(r)) for r in rows]
 
+    async def save_export(self, export: Export) -> None:
+        await self._pool.execute(
+            """
+            INSERT INTO exports (id, status, created_at, activity_id)
+            VALUES ($1, $2, $3, $4)
+            """,
+            export.id,
+            export.status,
+            export.created_at,
+            export.activity_id,
+        )
+
+    async def _fetch_export(self, sql: str, *args: object) -> Export | None:
+        row = await self._pool.fetchrow(sql, *args)
+        if row is None:
+            return None
+        # payload is JSONB; asyncpg hands it back as str with no codec set, which
+        # is what we want since the admin only ever passes it straight through.
+        return Export(**dict(row))
+
+    async def get_export(self, export_id: str) -> Export | None:
+        return await self._fetch_export(
+            f"SELECT {_EXPORT_COLUMNS} FROM exports WHERE id = $1", export_id
+        )
+
+    async def latest_export(self) -> Export | None:
+        return await self._fetch_export(
+            f"SELECT {_EXPORT_COLUMNS} FROM exports ORDER BY created_at DESC LIMIT 1"
+        )
+
+    async def update_export(self, export_id: str, **changes: object) -> Export:
+        columns = list(changes)
+        # payload is JSONB, so its placeholder needs an explicit cast.
+        assignments = ", ".join(
+            f"{c} = ${i + 2}" + ("::jsonb" if c == "payload" else "") for i, c in enumerate(columns)
+        )
+        row = await self._pool.fetchrow(
+            f"UPDATE exports SET {assignments} WHERE id = $1 RETURNING {_EXPORT_COLUMNS}",
+            export_id,
+            *(changes[c] for c in columns),
+        )
+        if row is None:
+            raise KeyError(export_id)
+        return Export(**dict(row))
+
     async def update_run(self, run_id: str, **changes: object) -> Run:
         # Column names are validated against the dataclass fields by the caller
         # below, so interpolating them here cannot carry caller-controlled SQL.
@@ -314,3 +400,28 @@ async def update_run(run_id: str, **changes: object) -> Run:
             raise KeyError(run_id)
         return existing
     return await _backend.update_run(run_id, **changes)
+
+
+async def save_export(export: Export) -> None:
+    await _backend.save_export(export)
+
+
+async def get_export(export_id: str) -> Export | None:
+    return await _backend.get_export(export_id)
+
+
+async def latest_export() -> Export | None:
+    """Most recent export, used to render the panel on page load."""
+    return await _backend.latest_export()
+
+
+async def update_export(export_id: str, **changes: object) -> Export:
+    unknown = set(changes) - _EXPORT_FIELDS
+    if unknown:
+        raise TypeError(f"unknown Export fields: {sorted(unknown)}")
+    if not changes:
+        existing = await _backend.get_export(export_id)
+        if existing is None:
+            raise KeyError(export_id)
+        return existing
+    return await _backend.update_export(export_id, **changes)

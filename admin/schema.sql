@@ -34,3 +34,18 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS runs_session_created_idx
     ON runs (session_id, created_at DESC);
+
+-- Export jobs (EXPORT-TASK.md). Written by the `export-job` task, which
+-- relates to this same service and updates its own row on completion (D16).
+-- The admin only creates the row and reads it back for the download.
+CREATE TABLE IF NOT EXISTS exports (
+    id            TEXT PRIMARY KEY,
+    status        TEXT NOT NULL,
+    activity_id   TEXT,
+    created_at    TIMESTAMPTZ NOT NULL,
+    completed_at  TIMESTAMPTZ,
+    session_count INTEGER,
+    run_count     INTEGER,
+    payload       JSONB,
+    error         TEXT
+);

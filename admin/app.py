@@ -35,6 +35,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CODING_AGENT_TASK = "coding-agent"
+EXPORT_TASK = "export-job"
 PUBLIC_PATHS = frozenset({"/login", "/health"})
 
 # Machine-readable markers the coding-agent prints on stdout (ITERATION-2 §6.5).
@@ -177,10 +178,16 @@ async def chat(request: Request) -> Response:
     sid = _active_session_id(request)
     runs = await storage.list_runs(session_id=sid)
     sessions = await storage.list_sessions()
+    export = await storage.latest_export()
     return templates.TemplateResponse(
         request,
         "chat.html",
-        {"runs": runs, "sessions": sessions, "active_session_id": sid},
+        {
+            "runs": runs,
+            "sessions": sessions,
+            "active_session_id": sid,
+            "export": export,
+        },
     )
 
 
@@ -247,6 +254,81 @@ async def submit_run(
         activity_id=activity_id,
     )
     return _render_card(request, run)
+
+
+def _render_export(request: Request, export: storage.Export | None) -> Response:
+    return templates.TemplateResponse(request, "_export_card.html", {"export": export})
+
+
+@app.post("/exports")
+async def submit_export(request: Request) -> Response:
+    """Trigger the export-job task. Unlike a run this creates no session: the
+    export is about the whole database, not one chat."""
+    export = storage.Export(id=str(uuid.uuid4()), status="triggering", created_at=datetime.now(UTC))
+    await storage.save_export(export)
+
+    client: UpsunClient = request.app.state.upsun
+    try:
+        body = await client.trigger_task(_current_env(), EXPORT_TASK, {"EXPORT_ID": export.id})
+    except (httpx.HTTPError, KeyError) as exc:
+        logger.exception("trigger_task failed for export %s", export.id)
+        export = await storage.update_export(
+            export.id, status="failed", error=str(exc), completed_at=datetime.now(UTC)
+        )
+        return _render_export(request, export)
+
+    activities = (body.get("_embedded") or {}).get("activities") or []
+    activity_id = activities[0].get("id") if activities else None
+    if not activity_id:
+        export = await storage.update_export(
+            export.id,
+            status="failed",
+            error="trigger response missing activity id",
+            completed_at=datetime.now(UTC),
+        )
+        return _render_export(request, export)
+    export = await storage.update_export(export.id, status="running", activity_id=activity_id)
+    return _render_export(request, export)
+
+
+@app.get("/exports/{export_id}")
+async def poll_export(request: Request, export_id: str) -> Response:
+    """HTMX poll. The task writes its own success row, so this only has to
+    notice failure; anything else is read straight back from the database."""
+    export = await storage.get_export(export_id)
+    if export is None:
+        return Response(status_code=404)
+    if export.status in ("succeeded", "failed") or not export.activity_id:
+        return _render_export(request, export)
+
+    client: UpsunClient = request.app.state.upsun
+    try:
+        activity = await client.get_activity(_current_env(), export.activity_id)
+    except httpx.HTTPError:
+        logger.exception("get_activity failed for export %s", export_id)
+        return _render_export(request, export)
+
+    if activity.get("state") == "complete" and activity.get("result") != "success":
+        export = await storage.update_export(
+            export_id,
+            status="failed",
+            error=f"export task {activity.get('result') or 'failed'}",
+            completed_at=datetime.now(UTC),
+        )
+    return _render_export(request, export)
+
+
+@app.get("/exports/{export_id}/download")
+async def download_export(export_id: str) -> Response:
+    export = await storage.get_export(export_id)
+    if export is None or export.payload is None:
+        return Response(status_code=404)
+    stamp = (export.completed_at or export.created_at).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=export.payload,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="sessions-{stamp}.json"'},
+    )
 
 
 async def _poll_activity(client: UpsunClient, run: storage.Run) -> storage.Run:

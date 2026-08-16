@@ -23,6 +23,8 @@ We grow the playground in small, demonstrable increments. This document specifie
 
 Detailed forward-looking notes for each pending iteration: [FUTURE-ITERATIONS.md](./FUTURE-ITERATIONS.md).
 
+**Off the arc:** [EXPORT-TASK.md](./EXPORT-TASK.md) covers the `export-job` task, a second task container added purely to demonstrate that a task is general-purpose on-demand compute rather than an agent runtime. It is a demo side-track and is deliberately not an iteration row, so this table keeps meaning what it says.
+
 ---
 
 ## 2. Iteration 1 — Visual Flask app + minimal coding-agent task
