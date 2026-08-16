@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Admin{% endblock %} — Upsun Task Playground</title>
+  <!-- Root-relative on purpose: Starlette's url_for builds an absolute URL from
+       the request scheme, which is http behind the Upsun router and would be
+       blocked as mixed content on the https site. -->
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@2"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">

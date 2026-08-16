@@ -24,6 +24,7 @@ import storage
 from auth import verify_password
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from upsun_client import UpsunClient
@@ -58,6 +59,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
+
+# Serves the favicon. require_login below already lets /static/ through
+# unauthenticated, so the icon also shows on the login page.
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # Register the auth gate BEFORE SessionMiddleware: Starlette inserts each
